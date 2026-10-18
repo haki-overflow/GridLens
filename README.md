@@ -11,16 +11,23 @@ A Python tool that solves an N-bus power system and turns the results into somet
 - Network diagram coloured by bus voltage, plus voltage-profile and post-fault charts.
 - Method comparison table (convergence, iterations, loss, minimum voltage).
 - Optional report written by a local Gemma model via LM Studio, given only the solver's numbers.
+- Three sidebar modes (Quick, Standard, Advanced) so nobody has to fill every field; untouched settings fall back to defaults.
+- Grid data loads three ways: preset case, uploaded bus/line CSV pair (blank templates included), or direct table edits.
+- Optional columns: transformer taps (`Tap`) and bus shunts (`Bs`) appear only when ticked; `Tap = 1`, `Bs = 0` and missing `B` are filled automatically before solving.
+- Opt-in studies: N-1 contingency, method comparison, short circuit and AI report — only the ticked studies run and get tabs.
+- Pre-solve validation with friendly, specific errors (slack count, lines to missing buses, `X = 0`, disconnected network, bad numbers).
+- Exports: CSV downloads for bus results, line flows, N-1 and fault tables, a ZIP of all matplotlib figures as PNG, and the current input tables.
 
 ## Project structure
 
 ```
 CAPSA/
-├── app.py                 Streamlit GUI: sidebar settings, editable tables, result tabs
+├── app.py                 Streamlit GUI: modes, dynamic inputs, validation, result tabs, exports
+├── ui_theme.py            control-room palette, CSS injection (banner/badges/cards), matplotlib style
 ├── solver.py              METHODS, build_ybus, injections, the three solvers, solve_loadflow
 ├── cases.py               _bus/_lines helpers and the CASES presets
 ├── studies.py             contingency (N-1) and fault_analysis (3-phase via Zbus)
-├── plotting.py            draw_network: layout and voltage-coloured network diagram
+├── plotting.py            draw_network plus voltage-profile / convergence / post-fault figures
 ├── ai_report.py           LMSTUDIO_URL, lm_models, ai_report (local Gemma via LM Studio)
 ├── check_refactor.py      asserts the split modules match power_flow_methods.py exactly
 ├── power_flow_methods.py  the original single-file version, kept as the comparison baseline
@@ -32,13 +39,14 @@ CAPSA/
 
 ## Execution flow
 
-1. `streamlit run app.py` imports the modules and calls `main()` in `app.py`.
-2. The sidebar fills the case selector from `CASES` (`cases.py`), the method selector from `METHODS` (`solver.py`), and the Base MVA and voltage-limit inputs. The bus and line tables are the selected preset's DataFrames built by `_bus` and `_lines` (`cases.py`).
-3. Clicking **Solve** calls `solve_loadflow(bus, lines, method)` (`solver.py`). It builds the admittance matrix with `build_ybus`, flat-starts the PQ voltages, forms the P/Q setpoints, dispatches to `newton_raphson`, `fast_decoupled` or `gauss_seidel`, then computes bus injections and per-line flows. It returns `(res, flows, ok, hist)`.
-4. The same click loops over all three methods for the comparison table, and calls `contingency(bus, lines, vmin, vmax)` (`studies.py`), which removes each line in turn and re-solves the case.
-5. Results and a summary string (bus table, total loss in MW, voltage limits, worst three outages) are stored in `st.session_state["out"]`.
-6. The tabs render: load flow tables and charts; the network diagram from `draw_network(res, lines, vmin, vmax)` (`plotting.py`); the N-1 table; the short-circuit tab calls `fault_analysis(bus, lines, res, xd, zf, base, kv)` (`studies.py`) with the Xd'', Zf and base kV inputs and plots post-fault voltages.
+1. `streamlit run app.py` imports the modules and calls `main()` in `app.py`; `ui_theme.inject()` applies the dark control-room CSS and the GridLens banner.
+2. The sidebar mode selector stages the inputs: **Quick** shows only the case source (preset or CSV upload) and study checkboxes; **Standard** adds the method, Base MVA and voltage limits; **Advanced** adds the transformer-tap and shunt-columns toggles and the solver tolerance. Every input carries a `help=` tooltip with its unit.
+3. The bus and line tables are `st.data_editor`s over `st.session_state["bus_tbl"]` / `["lines_tbl"]`, seeded from the preset (`cases.py`), replaced by `pd.read_csv` on upload, and edited in place. Hidden `Tap`/`Bs` columns keep their data; `_prep()` fills `Tap = 1`, `Bs = 0` and missing `B` before the solver sees the tables.
+4. Pressing **Solve** validates first (`_prep` returns friendly problems for a wrong slack count, lines to missing buses, `X = 0`, disconnected networks and non-numeric cells) — on success it calls `solve_loadflow(bus, lines, method, tol)` (`solver.py`), which builds the admittance matrix with `build_ybus`, flat-starts the PQ voltages, dispatches to `newton_raphson`, `fast_decoupled` or `gauss_seidel`, then computes bus injections and per-line flows, returning `(res, flows, ok, hist)`.
+5. Only the ticked studies run on the same click: the method-comparison loop over all three methods and `contingency(bus, lines, vmin, vmax)` (`studies.py`). Results and a summary string (bus table, load and loss in MW, voltage limits, worst three outages when N-1 ran) are stored in `st.session_state["out"]`.
+6. The top strip renders status badges (CONVERGED/DIVERGED, N-1 SECURE/VIOLATIONS) and six metric cards (slack injection, generation, load, losses, min/max voltage). The tabs render: load-flow tables and the voltage-profile/convergence figures; the network diagram from `draw_network(res, lines, vmin, vmax, flows)` (`plotting.py`); the comparison and N-1 tables; the short-circuit tab calls `fault_analysis(bus, lines, res, xd, zf, base, kv)` (`studies.py`) with its own Xd'', Zf and base-kV inputs and plots post-fault voltages; the AI-report tab lists LM Studio models.
 7. In the AI report tab, `lm_models()` (`ai_report.py`) lists the models loaded in LM Studio. **Generate report** calls `ai_report(summary, model)`, which posts the summary to the LM Studio chat endpoint; the model phrases the numbers, it does not compute them.
+8. The Export tab provides CSV downloads (bus results, line flows, N-1, fault table — disabled unless that study ran), the current input tables, and `gridlens_figures.zip` bundling every matplotlib figure as PNG (`_fig_zip` in `app.py`).
 
 ```mermaid
 flowchart TD
@@ -68,7 +76,8 @@ flowchart TD
 | Convergence flag or iteration counts look off | `solver.py` (convergence history handling) |
 | N-1 table wrong or full of FAILED rows | `studies.py` (`contingency`) |
 | Fault currents or kA numbers wrong | `studies.py` (`fault_analysis`), base kV input in `app.py` |
-| Diagram or voltage colours broken | `plotting.py` (`draw_network`) |
+| Diagram or voltage colours broken | `plotting.py` (`draw_network`, profile/history/fault figures) |
+| Theme, banner, badges or metric cards look wrong | `ui_theme.py` (`inject`, `mpl_dark`), `.streamlit/config.toml` |
 | Report fails, or no models listed | `ai_report.py` (`lm_models`, `ai_report`); check LM Studio on port 1234 |
 | Layout, editors or tab content misbehave | `app.py` (`main`) |
 
@@ -86,6 +95,8 @@ The AI report needs LM Studio: open the Developer tab, load a Gemma model, click
 ## Data format
 
 Everything is per unit on the Base MVA from the sidebar.
+
+`Tap` and `Bs` are optional UI columns (Advanced-mode toggles). When a toggle is off the column is hidden in the table but its data is kept; `_prep()` in `app.py` fills `Tap = 1` (or `Bs = 0`) before solving, and missing `B` values become `0`.
 
 Bus table:
 

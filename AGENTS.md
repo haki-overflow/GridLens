@@ -23,8 +23,10 @@ solver.py      METHODS, build_ybus, injections, newton_raphson, fast_decoupled,
                gauss_seidel, solve_loadflow
 studies.py     contingency (N-1), fault_analysis (3-phase, Zbus)
 plotting.py    draw_network and other matplotlib figures
+ui_theme.py    control-room palette, CSS injection (banner, badges, metric
+               cards), mpl_dark matplotlib style
 ai_report.py   LMSTUDIO_URL, lm_models, ai_report
-app.py         Streamlit GUI (main)
+app.py         Streamlit GUI (main): modes, dynamic inputs, validation, exports
 ```
 If the code is still in the single file `power_flow_methods.py`, it contains all of the above in this order: solver, local AI, study extras, cases, GUI.
 
@@ -60,6 +62,14 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 3. Short circuit uses a single base kV for all buses; wrong kA on multi-voltage cases like IEEE 14.
 4. Numerical Jacobian is slow on large cases; analytical Jacobian only if big cases are needed.
 5. No PV Q limits / PV-to-PQ switching (document as a limitation).
+
+## UI (app.py + ui_theme.py)
+- Sidebar **Mode**: Quick (case source + study checkboxes only), Standard (adds method, base MVA, voltage limits), Advanced (adds tap/shunt column toggles, solver tolerance). Untouched fields use defaults.
+- `Tap` and `Bs` columns appear only when their Advanced toggles are on; `_prep` in `app.py` fills `Tap = 1`, `Bs = 0` and missing `B` before calling the solver, and warns when hidden non-default data exists.
+- Study checkboxes (N-1, method comparison, short circuit, AI report) gate both computation and tabs: only ticked studies run; short-circuit fields and the LM Studio picker live inside their own tabs.
+- Validation happens in `_prep` (app.py owns it): friendly messages for slack count, lines to missing buses, `X = 0`, disconnected networks, non-numeric cells. Fix validation bugs there, not in `solver.py`.
+- Everything lives in `st.session_state` under stable keys; table editor keys carry a version counter so preset/upload/column-toggle switches rebuild cleanly.
+- Theme code (CSS injection, banner SVG, badge helper, `mpl_dark`) lives in `ui_theme.py`; `.streamlit/config.toml` carries the base dark theme. Keep app.py free of styling.
 
 ## Testing
 - `pytest`: all three methods converge on both cases and agree on bus voltages within 1e-4 pu; total loss > 0; N-1 returns one row per line.

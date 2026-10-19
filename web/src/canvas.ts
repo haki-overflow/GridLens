@@ -32,6 +32,15 @@ registerDoc("canvas", (el) => {
     .on("zoom", (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => world.attr("transform", e.transform.toString()));
   svg.call(zoom).on("dblclick.zoom", null);
 
+  interface OutageData { k: number; sig: string | null; res: Rec[]; flows: Rec[] }
+  let outageData: OutageData | null = null;
+  let outageAsked = "";
+  const chip = h("div", "outage-chip");
+  chip.hidden = true;
+  chip.title = "Click to clear";
+  chip.addEventListener("click", () => setState({ outage: null }));
+  wrap.append(chip);
+
   let layout: Layout | null = null;
   let layoutSig: string | null = null;
   let token = 0;
@@ -69,6 +78,15 @@ registerDoc("canvas", (el) => {
     const L = layout;
     const fresh = s.results && caseSig(s.case) === s.solvedSig ? s.results : null;
     const sel = s.selection;
+    const od = fresh && s.outage !== null && outageData && outageData.k === s.outage
+      && outageData.sig === s.solvedSig ? outageData : null;
+    const resRows = od ? od.res : fresh?.res;
+    const flowRows = od ? od.flows : fresh?.flows;
+    if (fresh && s.outage !== null) {
+      const l = c.lines[s.outage];
+      chip.textContent = `Outage: line ${l?.From}-${l?.To} tripped${od ? "" : " (solving...)"} - click to clear`;
+      chip.hidden = false;
+    } else chip.hidden = true;
     const xs = L.cx.flatMap((x, i) => [x - L.w[i]! / 2, x + L.w[i]! / 2]);
     grid.attr("x", Math.floor(Math.min(...xs)) - 50).attr("y", Math.floor(Math.min(...L.cy)) - 50)
       .attr("width", 200).attr("height", 200).style("display", s.view.grid ? "inline" : "none");
@@ -77,7 +95,14 @@ registerDoc("canvas", (el) => {
     gBranch.selectAll("*").remove();
     L.routes.forEach((pts, k) => {
       const isSel = sel?.kind === "branch" && sel.index === k;
-      gBranch.append("path").attr("class", `branch${isSel ? " sel" : ""}`).attr("d", line(pts));
+      const tripped = !!fresh && s.outage === k;
+      gBranch.append("path").attr("class", `branch${isSel ? " sel" : ""}${tripped ? " tripped" : ""}`)
+        .attr("d", line(pts));
+      if (tripped) {
+        const m = pts[Math.floor((pts.length - 1) / 2)]!, n2 = pts[Math.floor((pts.length - 1) / 2) + 1] ?? m;
+        gText.append("text").attr("class", "trip-x").attr("x", (m[0] + n2[0]) / 2).attr("y", (m[1] + n2[1]) / 2 + 0.2)
+          .attr("text-anchor", "middle").text("✕");
+      }
       gBranch.append("path").attr("class", "branch hit").attr("d", line(pts))
         .on("click", (e: MouseEvent) => {
           e.stopPropagation();
@@ -90,32 +115,44 @@ registerDoc("canvas", (el) => {
     gText.selectAll("*").remove();
     c.bus.forEach((b, i) => {
       const x = L.cx[i]!, y = L.cy[i]!, w = L.w[i]!;
-      const res = fresh?.res[i];
+      const res = resRows?.[i];
       const v = res ? Number(res["V (pu)"]) : NaN;
       const colour = Number.isFinite(v) ? BAND(v, fresh!.vmin, fresh!.vmax) : "var(--muted)";
       const isSel = sel?.kind === "bus" && sel.index === i;
       gBus.append("line").attr("class", "bar-line").attr("x1", x - w / 2).attr("x2", x + w / 2)
         .attr("y1", y).attr("y2", y)
         .style("stroke", isSel ? "var(--accent)" : colour);
-      gBus.append("rect").attr("class", "bus-hit").attr("x", x - w / 2).attr("y", y - 0.35)
+      const hit = gBus.append("rect").attr("class", "bus-hit").attr("x", x - w / 2).attr("y", y - 0.35)
         .attr("width", w).attr("height", 0.7)
         .on("click", (e: MouseEvent) => {
           e.stopPropagation();
           setState({ selection: { kind: "bus", index: i } });
         })
-        .append("title").text(`Bus ${i + 1}`);
+
+      hit.append("title").text(`Bus ${i + 1} - drag to move`);
+      hit.call(d3.drag<SVGRectElement, unknown>()
+        .on("start", () => setState({ selection: { kind: "bus", index: i } }))
+        .on("drag", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
+          const [px, py] = d3.pointer(e.sourceEvent as MouseEvent, world.node());
+          L.cx[i] = Math.round(px * 2) / 2;
+          L.cy[i] = Math.round(py * 2) / 2;
+          draw(getState());
+        })
+        .on("end", () => commitPositions()));
       const sx = x + w / 2 - 0.45;
       if (b.Type === "Slack" || b.Type === "PV") {
         gBus.append("line").attr("class", "sym").attr("x1", sx).attr("x2", sx).attr("y1", y).attr("y2", y - 0.9);
         gBus.append("circle").attr("class", "sym").attr("cx", sx).attr("cy", y - 1.2).attr("r", 0.3);
         gText.append("text").attr("class", "bus-label").attr("x", sx).attr("y", y - 1.08)
           .attr("text-anchor", "middle").style("font-size", "0.3px").text("G");
+        gText.append("text").attr("class", "angle-label").attr("x", sx + 0.42).attr("y", y - 1.1).text(`G${i + 1}`);
       }
       if (Number(b.Pd) > 0) {
         const lx = x - w / 2 + 0.45;
         gBus.append("line").attr("class", "sym").attr("x1", lx).attr("x2", lx).attr("y1", y).attr("y2", y + 0.75);
         gBus.append("path").attr("class", "sym-load")
           .attr("d", `M${lx - 0.17},${y + 0.75}L${lx + 0.17},${y + 0.75}L${lx},${y + 1.02}Z`);
+        gText.append("text").attr("class", "angle-label").attr("x", lx + 0.28).attr("y", y + 1.0).text(`Load ${i + 1}`);
       }
       gText.append("text").attr("class", "bus-label").attr("x", x - w / 2 + 0.05).attr("y", y - 0.2)
         .text(Number.isFinite(v) ? `${i + 1}  ${v.toFixed(3)}` : `${i + 1}`);
@@ -125,9 +162,10 @@ registerDoc("canvas", (el) => {
       }
     });
 
-    if (s.view.flows && fresh) {
+    if (s.view.flows && fresh && flowRows) {
       L.routes.forEach((pts, k) => {
-        const f = fresh.flows[k] as Rec | undefined;
+        if (od && k === s.outage) return;
+        const f = flowRows[od && s.outage !== null && k > s.outage ? k - 1 : k] as Rec | undefined;
         if (!f || pts.length < 2) return;
         let best = 0, at: [number, number] = pts[0]!;
         for (let j = 1; j < pts.length; j++) {
@@ -139,6 +177,32 @@ registerDoc("canvas", (el) => {
           .text(`${(Number(f.P_ij) * fresh.base).toFixed(1)} MW`);
       });
     }
+  };
+
+  /** Save the bar positions into the case (raw diagram units, never all whole
+   *  numbers, so oneline.layout does not read them as grid cells). */
+  const commitPositions = () => {
+    const s = getState();
+    if (!layout || !s.case) return;
+    const L = layout;
+    setState({ case: { ...s.case, bus: s.case.bus.map((b, i) => (
+      { ...b, x: Math.round(L.cx[i]! * 2) / 2 + 0.001, y: Math.round(L.cy[i]! * 2) / 2 + 0.001 })) } });
+  };
+
+  const sigOf = (c: CaseData | null) => c ? JSON.stringify([c.name, c.bus.length,
+    c.lines.map((l) => [l.From, l.To]), c.bus.map((b) => [b.x, b.y])]) : null;
+
+  const wantOutage = (s: State) => {
+    if (!s.case || !s.results || s.outage === null || caseSig(s.case) !== s.solvedSig) return;
+    if (outageData && outageData.k === s.outage && outageData.sig === s.solvedSig) return;
+    const key = `${s.outage}|${s.solvedSig}`;
+    if (key === outageAsked) return;
+    outageAsked = key;
+    const k = s.outage, sig = s.solvedSig;
+    post<{ res: Rec[]; flows: Rec[] }>(`/api/outage/${k}`, s.case).then((o) => {
+      outageData = { k, sig, res: o.res, flows: o.flows };
+      draw(getState());
+    }).catch((e) => report(e, "The outage case"));
   };
 
   const refresh = async (c: CaseData) => {
@@ -160,7 +224,8 @@ registerDoc("canvas", (el) => {
 
   svg.on("click", () => setState({ selection: null }));
   subscribe((s) => {
-    const sig = s.case ? JSON.stringify([s.case.name, s.case.bus.length, s.case.lines.map((l) => [l.From, l.To])]) : null;
+    wantOutage(s);
+    const sig = sigOf(s.case);
     if (sig !== layoutSig) {
       layoutSig = sig;
       if (s.case) void refresh(s.case);
@@ -173,6 +238,7 @@ registerDoc("canvas", (el) => {
     }
   });
   const s0 = getState();
-  layoutSig = s0.case ? JSON.stringify([s0.case.name, s0.case.bus.length, s0.case.lines.map((l) => [l.From, l.To])]) : null;
+  layoutSig = sigOf(s0.case);
+  wantOutage(s0);
   if (s0.case) void refresh(s0.case);
 });

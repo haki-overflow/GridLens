@@ -24,6 +24,7 @@ export interface State {
   solvedCase: CaseData | null; // the case the results belong to
   solvedSig: string | null;
   selection: Selection | null;
+  outage: number | null; // index of the line shown tripped on the diagram
   openDocs: string[];
   activeDoc: string;
   view: View;
@@ -38,7 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const KEY = "gridlens.project";
 const fresh = (): State => ({
-  case: null, results: null, solvedCase: null, solvedSig: null, selection: null,
+  case: null, results: null, solvedCase: null, solvedSig: null, selection: null, outage: null,
   openDocs: ["canvas"], activeDoc: "canvas",
   view: { grid: true, flows: false, angles: false }, messages: [],
   fileName: "untitled.gridlens.json",

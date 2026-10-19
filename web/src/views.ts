@@ -9,7 +9,7 @@ import { getState, isStale, subscribe, type CaseData, type State, type Study } f
 import {
   cards, field, fmt, headline, matrix, notice, NEED_RUN, numIn, section, selectIn, subtabs, table, title,
 } from "./ui";
-import { lineChart } from "./charts";
+import { stackedPlot } from "./charts";
 
 type Paint = (body: HTMLElement, r: Study, c: CaseData) => void;
 
@@ -153,9 +153,20 @@ resultsDoc("pv-analysis", "PV analysis", "Loads and generation scaled by λ unti
       `Weakest bus: ${weak[0]?.Bus ?? "-"} (${fmt(weak[0]?.["|V| at nose (pu)"], 3)} pu at the nose).`,
     lam >= 1.5 ? "ok" : "bad"));
     const [c1, c2] = subtabs(el, ["P-V curves", "Weakest buses"], "pv");
-    c1!.append(lineChart(curve.map((x) => n(x.lambda)),
-      buses.map((b) => ({ name: b, y: curve.map((x) => n(x[b])) })),
-      { xLabel: "Load scaling λ", yLabel: "|V| (pu)", hline: { y: r.vmin, label: `Vmin ${r.vmin}` } }));
+    const lamX = curve.map((x) => n(x.lambda));
+    const weakNames = new Set(weak.slice(0, 3).map((w) => w.Bus));
+    const varying = buses.filter((b) => {
+      const ys = curve.map((x) => n(x[b]));
+      return Math.max(...ys) - Math.min(...ys) > 1e-6;
+    });
+    const mk = (f: (ys: number[]) => number[]) => varying.map((b) => ({
+      name: b, y: f(curve.map((x) => n(x[b]))), dim: !weakNames.has(b),
+    }));
+    c1!.append(stackedPlot(lamX, [
+      { yLabel: "|V| (pu)", series: mk((y) => y), hline: { y: r.vmin, label: `Vmin ${r.vmin}` } },
+      { yLabel: "Drop from λ=0 (pu)", series: mk((y) => y.map((v) => v - y[0]!)) },
+    ], { xLabel: "Load scaling λ (all loads and generation)", panelHeight: 150,
+      vline: { x: lam, label: `λ max ${lam.toFixed(2)}` } }));
     c2!.append(table(weak, { digits: { "|V| at nose (pu)": 4 } }));
   });
 

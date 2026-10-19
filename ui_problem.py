@@ -5,52 +5,25 @@ ohms, ohms/km, µS, MVAr, MW); units.to_pu converts it and every converted
 value is listed so it can be checked against a hand calculation. "Load
 into study" hands the per-unit tables to the main case.
 """
-import pandas as pd
 import streamlit as st
 
+import ui_tables
 import ui_theme
 import units
 
 TABLES = ("buses", "lines", "trafos")
 
 
-def _apply(df, delta):
-    """Apply a data_editor delta (edited / added / deleted rows) to df."""
-    df = df.copy()
-    for r, cols in delta.get("edited_rows", {}).items():
-        for c, v in cols.items():
-            df.loc[df.index[int(r)], c] = v
-    if delta.get("deleted_rows"):
-        df = df.drop(df.index[delta["deleted_rows"]])
-    if delta.get("added_rows"):
-        df = pd.concat([df, pd.DataFrame(delta["added_rows"])],
-                       ignore_index=True)
-    return df.reset_index(drop=True)
-
-
-def _commit(name, key):
-    """on_change: fold the edits into the stored table and bump the editor
-    key, so the editor restarts from the new table and edits survive
-    leaving the page."""
-    ss = st.session_state
-    ss[f"prob_{name}"] = _apply(ss[f"prob_{name}"], ss[key])
-    ss[f"prob_v_{name}"] = ss.get(f"prob_v_{name}", 0) + 1
-
-
 def _init():
     ss = st.session_state
-    for name in TABLES:
-        ss.setdefault(f"prob_{name}", units.EXAMPLE[name].copy())
     for k in ("sbase", "ref_bus", "ref_kv"):
         ss.setdefault(f"prob_{k}", units.EXAMPLE[k])
 
 
 def _editor(where, name, column_config):
-    ss = st.session_state
-    key = f"prob_ed_{name}_{ss.get(f'prob_v_{name}', 0)}"
-    where.data_editor(ss[f"prob_{name}"], num_rows="dynamic", hide_index=True,
-                      key=key, on_change=_commit, args=(name, key),
-                      column_config=column_config)
+    ui_tables.editor(where, f"prob_{name}",
+                     lambda: units.EXAMPLE[name].copy(), num_rows="dynamic",
+                     column_config=column_config)
 
 
 def page(load):
@@ -98,8 +71,9 @@ def page(load):
             help="Off-nominal ratio at the From side, 1 = nominal.")})
 
     try:
+        t = {k: ss[f"tbl_prob_{k}"] for k in TABLES}
         r = units.to_pu(ss["prob_sbase"], ss["prob_ref_bus"], ss["prob_ref_kv"],
-                        ss["prob_buses"], ss["prob_lines"], ss["prob_trafos"])
+                        t["buses"], t["lines"], t["trafos"])
     except Exception as e:
         st.error(f"Cannot convert: {e}")
         return

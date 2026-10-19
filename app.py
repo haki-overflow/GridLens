@@ -12,6 +12,7 @@ import streamlit as st
 
 import ui_problem
 import ui_theme
+import ui_topics
 import ui_working
 from ai_report import ai_report, lm_models
 import oneline
@@ -845,10 +846,14 @@ PAGES = (("Dashboard", "dashboard", _tab_dashboard),
          ("Contingency N-1", "contingency", _tab_n1),
          ("PV analysis", "pv-analysis", _tab_pv),
          ("Fault levels", "fault-levels", _tab_sc),
+         ("Unsymmetrical faults", "faults", ui_topics.page_seqfault),
+         ("Economic dispatch", "dispatch", ui_topics.page_dispatch),
+         ("Symmetrical components", "symmetrical", ui_topics.page_symcomp),
+         ("Line parameters", "line", ui_topics.page_tline),
          ("Study report", "study-report", _tab_ai))
 
 
-STANDALONE = {"problem"}
+STANDALONE = {"problem", "dispatch", "symmetrical", "line"}
 
 
 def _page(title, path, body):
@@ -891,7 +896,7 @@ def main():
     st.set_page_config(page_title="GridLens - Power System Analysis",
                        layout="wide")
     pg = st.navigation({"Pages": [_page(*p) for p in PAGES]},
-                       position="sidebar")
+                       position="sidebar", expanded=True)
     _init()
     ui_theme.inject()
     cfg = _sidebar()

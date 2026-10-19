@@ -33,7 +33,9 @@ def cfmt(z, d=4):
 
 
 def pfmt(z, d=4):
-    """|z|∠angle° as text."""
+    """|z|∠angle° as text (a numerically zero value prints as 0)."""
+    if abs(z) < 1e-10:
+        return f"{0:.{d}f}"
     return f"{abs(z):.{d}f}∠{np.degrees(np.angle(z)):.2f}°"
 
 

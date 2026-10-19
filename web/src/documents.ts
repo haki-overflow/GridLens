@@ -152,7 +152,13 @@ resultsDoc("load-flow", "Load flow results", "Bus voltages, generation, line flo
       ? table(viol.map((x) => ({ Element: `Bus ${x.Bus}`, "Value (pu)": x["V (pu)"],
           "Limit (pu)": n(x["V (pu)"]) < r.vmin ? r.vmin : r.vmax })))
       : headline("No violations", "ok"));
-    const [bus, br] = subtabs(el, ["Bus report", "Branch report"], "lf");
+    const [bus, br, prof] = subtabs(el, ["Bus report", "Branch report", "Profile"], "lf");
+    const busNo = r.res.map((x) => n(x.Bus));
+    prof!.append(stackedPlot(busNo, [
+      { yLabel: "|V| (pu)", digits: 3, series: [{ name: "|V|", y: V }],
+        hline: { y: r.vmin, label: `Vmin ${r.vmin}` } },
+      { yLabel: "Angle (deg)", digits: 2, series: [{ name: "Angle", y: r.res.map((x) => n(x["Angle (deg)"])) }] },
+    ], { xLabel: "Bus number" }));
     bus!.append(table(r.res, { scale: { P_inj: r.base, Q_inj: r.base },
       rename: { P_inj: "P inj (MW)", Q_inj: "Q inj (MVAr)" },
       digits: { "Angle (deg)": 3, P_inj: 2, Q_inj: 2 },

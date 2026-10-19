@@ -10,12 +10,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+import ui_problem
 import ui_theme
 from ai_report import ai_report, lm_models
 import oneline
 from cases import CASES, COORDS
 from plotting import (convergence_history, fault_voltages,
                       pv_curves, voltage_profile)
+from qlimits import solve_with_qlimits
 from solver import METHODS, solve_loadflow
 from studies import contingency, fault_analysis, outage, pv_curve
 
@@ -30,17 +32,26 @@ TEMPLATES = {
                         "2,3,0.06,0.18,0.04,1\n"),
 }
 DEFAULTS = dict(method="Newton-Raphson", base=100.0, vmin=0.95, vmax=1.10,
-                tol=1e-8, taps=False, shunts=False)
+                tol=1e-8, taps=False, shunts=False, qlim=False)
+EXTRA_BUS_COLS = ("Qmin", "Qmax", "kV", "x", "y")   # optional, kept if present
 
 
 def _bump(which):
     st.session_state[f"{which}_v"] += 1
 
 
+def _set_base(base):
+    """Base MVA lives in `_base`; the sidebar widget is rebuilt from it."""
+    st.session_state["_base"] = float(base)
+    st.session_state.pop("base", None)
+
+
 def _pick_case():
     bus, lines = CASES[st.session_state["case"]]
     st.session_state["bus_tbl"] = bus.copy()
     st.session_state["lines_tbl"] = lines.copy()
+    st.session_state["case_src"] = None
+    _set_base(DEFAULTS["base"])
     st.session_state["problems"] = None
     st.session_state["notes"] = None
     _bump("bus")
@@ -68,7 +79,7 @@ def _pick_uploads():
         if which == "lines" and "Tap" not in df.columns:
             df["Tap"] = 1.0
         cols = LINE_COLS if which == "lines" else BUS_COLS + [
-            c for c in ("x", "y") if c in df.columns]
+            c for c in EXTRA_BUS_COLS if c in df.columns]
         st.session_state[f"{which}_tbl"] = df[cols].copy()
         _bump(which)
         replaced.append(which)
@@ -79,6 +90,7 @@ def _pick_uploads():
     if replaced:
         st.session_state["problems"] = None
         st.session_state["notes"] = None
+        st.session_state["case_src"] = None
 
 
 @st.cache_resource
@@ -111,6 +123,7 @@ def _init():
     st.session_state.setdefault("problems", None)
     st.session_state.setdefault("notes", None)
     st.session_state.setdefault("sc", None)
+    st.session_state.setdefault("_base", DEFAULTS["base"])
 
 
 def _cfg():
@@ -118,15 +131,16 @@ def _cfg():
     std = mode in ("Standard", "Advanced")
     adv = mode == "Advanced"
     cfg = dict(DEFAULTS)
+    cfg.update(base=st.session_state.get("_base", DEFAULTS["base"]))
     if std:
         cfg.update(method=st.session_state.get("method", DEFAULTS["method"]),
-                   base=st.session_state.get("base", DEFAULTS["base"]),
                    vmin=st.session_state.get("vmin", DEFAULTS["vmin"]),
                    vmax=st.session_state.get("vmax", DEFAULTS["vmax"]))
     if adv:
         cfg.update(tol=st.session_state.get("tol", DEFAULTS["tol"]),
                    taps=st.session_state.get("taps", False),
-                   shunts=st.session_state.get("shunts", False))
+                   shunts=st.session_state.get("shunts", False),
+                   qlim=st.session_state.get("qlim", False))
     cfg.update(mode=mode)
     return cfg
 
@@ -184,8 +198,10 @@ def _sidebar():
                             key="vmax",
                             help="Upper voltage limit for violation "
                                  "tracking (per unit).")
-            st.number_input("Base MVA", 1.0, 10000.0, 100.0, step=1.0,
-                            key="base",
+            st.number_input("Base MVA", 1.0, 10000.0,
+                            float(st.session_state["_base"]), step=1.0,
+                            key="base", on_change=lambda: st.session_state.update(
+                                _base=st.session_state["base"]),
                             help="System base power; per-unit results "
                                  "convert to MW/MVAr with this.")
         if adv:
@@ -195,6 +211,10 @@ def _sidebar():
             st.toggle("Shunt elements", key="shunts",
                       help="Show the bus Bs column (shunt susceptance). "
                            "When off, Bs = 0 is used.")
+            st.toggle("Generator Q limits", key="qlim",
+                      help="Show bus Qmin/Qmax (pu generation limits). A PV "
+                           "bus that needs more Q than its limit becomes PQ "
+                           "at the limit. Off: no limits (results as before).")
             st.number_input("Solver tolerance", 1e-12, 1e-3, DEFAULTS["tol"],
                             format="%g",
                             key="tol",
@@ -204,9 +224,24 @@ def _sidebar():
     return _cfg()
 
 
+def _edit_table(where, df, hide, key, **kw):
+    """data_editor over df without the `hide` columns; the hidden columns are
+    put back afterwards (row-aligned) so turning a toggle off loses no data."""
+    hide = [c for c in hide if c in df]
+    edited = where.data_editor(df.drop(columns=hide), key=key, **kw)
+    for c in hide:
+        vals = list(df[c])[:len(edited)]
+        edited[c] = vals + [np.nan] * (len(edited) - len(vals))
+    return edited[[c for c in df.columns if c in edited] +
+                  [c for c in edited.columns if c not in df.columns]]
+
+
 def _editors(cfg):
     if st.session_state.get("last_shunts") != bool(cfg["shunts"]):
         st.session_state["last_shunts"] = bool(cfg["shunts"])
+        _bump("bus")
+    if st.session_state.get("last_qlim") != bool(cfg["qlim"]):
+        st.session_state["last_qlim"] = bool(cfg["qlim"])
         _bump("bus")
     if st.session_state.get("last_taps") != bool(cfg["taps"]):
         st.session_state["last_taps"] = bool(cfg["taps"])
@@ -217,29 +252,32 @@ def _editors(cfg):
     left, right = box.columns([1.15, 1], gap="medium")
     left.html(ui_theme.section("Bus data"))
     left.caption("Per unit. Row n is bus n. Pd/Qd are positive demand, "
-                 "Pg/Qg injections; V is the setpoint (Slack/PV) or start.")
-    bus_view = st.session_state["bus_tbl"] if cfg["shunts"] else \
-        st.session_state["bus_tbl"].drop(columns="Bs", errors="ignore")
-    bus = left.data_editor(
-        bus_view, num_rows="dynamic", hide_index=True,
-        key=f"bus_ed_{st.session_state['bus_v']}",
+                 "Pg/Qg injections; V is the setpoint (Slack/PV) or start."
+                 + (" Qmin/Qmax: generator Q limits." if cfg["qlim"] else ""))
+    bus_tbl = st.session_state["bus_tbl"]
+    if cfg["qlim"]:
+        for c, v in (("Qmin", -9999.0), ("Qmax", 9999.0)):
+            if c not in bus_tbl:
+                bus_tbl = bus_tbl.assign(**{c: v})
+    hide = ([] if cfg["shunts"] else ["Bs"]) + \
+        ([] if cfg["qlim"] else ["Qmin", "Qmax"])
+    st.session_state["bus_tbl"] = _edit_table(
+        left, bus_tbl, hide, f"bus_ed_{st.session_state['bus_v']}",
+        num_rows="dynamic", hide_index=True,
         column_config={"Type": st.column_config.SelectboxColumn(
             "Type", options=["Slack", "PV", "PQ"],
             help="Slack: swing bus. PV: held |V|. PQ: load bus.")})
-    st.session_state["bus_tbl"] = bus
 
     right.html(ui_theme.section("Branch data"))
     right.caption("From/To are bus numbers. B is total line-charging "
                   "susceptance, split B/2 at each end.")
-    line_view = st.session_state["lines_tbl"] if cfg["taps"] else \
-        st.session_state["lines_tbl"].drop(columns="Tap", errors="ignore")
-    lines = right.data_editor(
-        line_view, num_rows="dynamic", hide_index=True,
-        key=f"lines_ed_{st.session_state['lines_v']}",
+    st.session_state["lines_tbl"] = _edit_table(
+        right, st.session_state["lines_tbl"], [] if cfg["taps"] else ["Tap"],
+        f"lines_ed_{st.session_state['lines_v']}",
+        num_rows="dynamic", hide_index=True,
         column_config={
             "From": st.column_config.NumberColumn("From", step=1),
             "To": st.column_config.NumberColumn("To", step=1)})
-    st.session_state["lines_tbl"] = lines
 
 
 def _prep(cfg):
@@ -263,6 +301,9 @@ def _prep(cfg):
 
     for c in ("V", "Pg", "Qg", "Pd", "Qd", "Bs"):
         b[c] = _num(b, c, probs, 1.0 if c == "V" else 0.0)
+    if cfg["qlim"]:
+        b["Qmin"] = _num(b, "Qmin", probs, -9999.0)
+        b["Qmax"] = _num(b, "Qmax", probs, 9999.0)
 
     for c in ("From", "To", "R", "X", "B", "Tap"):
         l[c] = _num_l(l, c, probs, 1.0 if c == "Tap" else 0.0)
@@ -352,10 +393,15 @@ def _num_l(df, col, probs, fill):
 
 
 @st.cache_data(show_spinner="Running studies...", max_entries=32)
-def _study(b, l, method, tol, base, vmin, vmax):
+def _study(b, l, method, tol, base, vmin, vmax, qlim=False):
     """Load flow plus every study, cached on the case and settings so any
-    page or browser tab gets the same results without re-solving."""
-    res, flows, ok, hist = solve_loadflow(b, l, method, tol)
+    page or browser tab gets the same results without re-solving. With
+    qlim the main load flow enforces generator Q limits (PV -> PQ)."""
+    qlog = []
+    if qlim:
+        res, flows, ok, hist, _, qlog = solve_with_qlimits(b, l, method, tol)
+    else:
+        res, flows, ok, hist = solve_loadflow(b, l, method, tol)
     rows = []
     for m in METHODS:
         r2, f2, ok2, h2 = solve_loadflow(b, l, m)
@@ -372,6 +418,7 @@ def _study(b, l, method, tol, base, vmin, vmax):
     return dict(res=res, flows=flows, ok=ok, its=len(hist) - 1, hist=hist,
                 method=method, tol=tol, b=b, l=l, cmp=cmp_df,
                 n1=n1, pv=pv, loss=loss, load=load, vmin=vmin, vmax=vmax, base=base,
+                qlog=qlog,
                 slack_k=k + 1, slack_p=res["P_inj"].iloc[k] * base,
                 summary=(f"Method: {method}, base {base} MVA\n"
                          + res.round(4).to_string(index=False)
@@ -402,10 +449,12 @@ def _inputs_sig(cfg):
     h = [int(pd.util.hash_pandas_object(st.session_state[k]).sum())
          for k in ("bus_tbl", "lines_tbl")]
     return tuple(h) + tuple(cfg[k] for k in ("method", "tol", "base", "vmin",
-                                              "vmax", "taps", "shunts"))
+                                              "vmax", "taps", "shunts", "qlim"))
 
 
 def _case_label():
+    if st.session_state.get("case_src") == "problem":
+        return "Problem input"
     if st.session_state.get("source", "Preset") != "Preset":
         return "User CSV"
     return st.session_state.get("case", next(iter(CASES)))
@@ -421,7 +470,7 @@ def _solve(cfg):
     st.session_state["problems"] = None
     st.session_state["notes"] = notes
     args = (b, l, cfg["method"], cfg["tol"], cfg["base"], cfg["vmin"],
-            cfg["vmax"])
+            cfg["vmax"], cfg["qlim"])
     try:
         out = _study(*args)
     except Exception as e:
@@ -753,18 +802,42 @@ def _tab_ai(out):
         st.caption("No report yet: generate it above.")
 
 
+def _load_problem(bus, lines, sbase):
+    """Problem input -> study case (on_click, runs before the widgets)."""
+    st.session_state["bus_tbl"] = bus.copy()
+    st.session_state["lines_tbl"] = lines.copy()
+    st.session_state["case_src"] = "problem"
+    st.session_state["case_label"] = "Problem input"
+    st.session_state["problems"] = None
+    st.session_state["notes"] = None
+    _set_base(sbase)
+    _bump("bus")
+    _bump("lines")
+
+
+def _tab_problem(out):
+    ui_problem.page(_load_problem)
+
+
 def _tab_dashboard(out):
     _strip(out)
+    if out.get("qlog"):
+        st.html(ui_theme.section("Generator Q limits: bus type switching"))
+        st.dataframe(pd.DataFrame(out["qlog"]), hide_index=True)
     _tab_loadflow(out)
 
 
 PAGES = (("Dashboard", "dashboard", _tab_dashboard),
+         ("Problem input", "problem", _tab_problem),
          ("Network diagram", "network", _tab_network),
          ("Solver check", "solver-check", _tab_cmp),
          ("Contingency N-1", "contingency", _tab_n1),
          ("PV analysis", "pv-analysis", _tab_pv),
          ("Fault levels", "fault-levels", _tab_sc),
          ("Study report", "study-report", _tab_ai))
+
+
+STANDALONE = {"problem"}
 
 
 def _page(title, path, body):
@@ -774,9 +847,14 @@ def _page(title, path, body):
         with st.container(horizontal=True, vertical_alignment="center",
                           horizontal_alignment="distribute"):
             st.html(f'<div class="gl-page">{title}</div>')
-            st.link_button("Open in new tab", f"./{path}", width="content")
+            st.link_button("Open in new tab",       # default page lives at /
+                           "./" if path == "dashboard" else f"./{path}",
+                           width="content")
         cfg = st.session_state["cfg"]
         out = st.session_state.get("out")
+        if path in STANDALONE:          # tools that need no solved case
+            body(out)
+            return
         if path == "dashboard":
             _editors(cfg)
             _, right = st.columns([4, 1.4])

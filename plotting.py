@@ -84,10 +84,12 @@ def fault_voltages(v_pu, vmin, vmax):
 
 def pv_curves(pv, lam_max, vmin, highlight=3):
     """P-V (nose) curves: |V| vs load multiplier; the weakest buses in
-    red/cyan, the rest dim grey, base case and last solvable point marked."""
+    red/cyan, the rest dim grey, base case and last solvable point marked.
+    Buses with a held voltage (Slack, PV) are flat lines and are left out."""
     plt = T.mpl_style()
     lam = pv["lambda"].to_numpy(dtype=float)
     V = pv.drop(columns="lambda")
+    V = V.loc[:, (V.max() - V.min()) > 1e-6]
     weak = V.iloc[-1].nsmallest(highlight).index
     fig, ax = plt.subplots(figsize=(7, 3.0))
     for c in V.columns:
@@ -95,16 +97,19 @@ def pv_curves(pv, lam_max, vmin, highlight=3):
             ax.plot(lam, V[c], color=P["axis"], lw=1.2, zorder=1)
     for c, col in zip(weak, (P["red"], P["c1"], P["text"])):
         ax.plot(lam, V[c], color=col, lw=1.9, label=c, zorder=3)
+    ax.set_xlim(lam.min(), lam_max * 1.04)
+    lo, hi = min(V.values.min(), vmin) - 0.03, V.values.max() + 0.04
+    ax.set_ylim(lo, hi)
     ax.axvline(1.0, color=P["text"], lw=0.9, ls=":", zorder=2)
-    ax.text(1.0, ax.get_ylim()[1], " base case", fontsize=8, va="top",
+    ax.text(1.0, hi - 0.01, " base case", fontsize=8, va="top",
             color=P["text"])
     ax.axvline(lam_max, color=P["red"], lw=0.9, ls="--", zorder=2)
-    ax.text(lam_max, ax.get_ylim()[0], f"\u03bb max {lam_max:.2f} ",
+    ax.text(lam_max, lo + 0.01, f"\u03bb max {lam_max:.2f} ",
             fontsize=8, ha="right", va="bottom", color=P["red"])
     ax.axhline(vmin, color=P["red"], lw=0.8, ls=(0, (2, 3)), alpha=0.6)
     ax.set_xlabel("Load multiplier \u03bb (all loads and generation)")
     ax.set_ylabel("|V| (pu)")
     ax.grid(color=P["grid"], lw=0.7)
-    ax.legend(loc="lower left", fontsize=8)
+    ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
     return fig

@@ -144,7 +144,10 @@ def page_iterations(out):
             col.html(ui_theme.section(name))
             col.dataframe(_block(M, r_, c_))
     st.html(ui_theme.section("Convergence"))
-    st.dataframe(pd.DataFrame({"Iter": [i["k"] for i in tr["its"]],
+    st.caption("The last row is the convergence check: the mismatch is "
+               "below tolerance, so no update is made.")
+    st.dataframe(pd.DataFrame({"Iter": [("check" if i.get("done") else str(i["k"]))
+                                        for i in tr["its"]],
                                "max mismatch": [f"{i['err']:.3e}" for i in tr["its"]]}),
                  hide_index=True, height=180)
 

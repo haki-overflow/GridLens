@@ -19,7 +19,7 @@ P = T.PAL
 GAP_X = 3.0       # between bars in the layered fallback
 ROW_Y = 5.0       # between rows
 GRID_X, GRID_Y = 7.0, 5.0   # grid column / row size for whole-number x, y
-LABEL_W = 2.0     # left part of a bar kept free of top ports (bus label)
+LABEL_W = 2.8     # left part of a bar kept free of top ports (bus label)
 END_W = 1.0       # corner kept for the generator / load symbol
 PORT_GAP = 0.7
 SYM = 0.45        # symbol inset from the bar end
@@ -412,13 +412,15 @@ def figure(res, lines, vmin, vmax, flows=None, base=100.0, bus=None,
             poly([routes[j]], line=dict(color=P["accent"], width=3.5))
 
     # labels: bus number + |V| (+ angle); flows only on request
-    fig.add_trace(go.Scatter(
-        x=cx - w / 2, y=Y + 0.15, mode="text", hoverinfo="skip",
-        showlegend=False, textposition="top right",
-        textfont=dict(size=10.5, color=ink, family=MONO),
-        text=[f"<b>{b['bus']}</b> {b['v']:.3f}"
-              + (f" ∠{b['ang']:.1f}°" if "angles" in show else "")
-              for b in binfo]))
+    # drawn as boxed annotations so a wire passing behind never strikes
+    # through the numbers (text is in pixels, the bar geometry in units)
+    for j, b in enumerate(binfo):
+        fig.add_annotation(
+            x=cx[j] - w[j] / 2, y=Y[j] + 0.12, xanchor="left", yanchor="bottom",
+            showarrow=False, bgcolor=P["canvas"], borderpad=1,
+            font=dict(size=10.5, color=ink, family=MONO),
+            text=f"<b>{b['bus']}</b> {b['v']:.3f}"
+                 + (f" ∠{b['ang']:.1f}°" if "angles" in show else ""))
     if "flows" in show:
         for r, pts in zip(linfo, routes):
             if "pij" in r:

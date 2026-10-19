@@ -261,6 +261,10 @@ code, pre, kbd, [data-testid="stMarkdownContainer"] code {
   font-family: var(--mono); }
 [class*="st-key-kpi"] [data-testid="stMetricDelta"] { color: var(--muted);
   font-size: var(--fs-sm); font-family: var(--mono); background: none; }
+[class*="st-key-kpi"] [data-testid="stMetricDelta"],
+[class*="st-key-kpi"] [data-testid="stMetricDelta"] > div { padding-left: 0 !important;
+  margin-left: 0 !important; }
+[class*="st-key-kpi"] [data-testid="stMetricDelta"] svg { display: none; }
 [class*="st-key-kpi-bad"] [data-testid="stMetricValue"] { color: var(--red) !important; }
 
 /* --- status badges: flat rectangles ------------------------------------------ */
@@ -354,3 +358,8 @@ code, pre, kbd, [data-testid="stMarkdownContainer"] code {
   margin: 2px 0; }
 .gl-ok { color: var(--green); background: var(--green-tint); border-color: var(--green-border); }
 .gl-bad { color: var(--red); background: var(--red-tint); border-color: var(--red-border); }
+
+/* --- number inputs: no steppers, sized to their content ------------------- */
+[data-testid="stNumberInputStepDown"], [data-testid="stNumberInputStepUp"] {
+  display: none !important; }
+[data-testid="stMain"] [data-testid="stNumberInput"] { max-width: 220px; }

@@ -22,11 +22,37 @@ A Python tool that solves an N-bus power system and turns the results into somet
 - Pre-solve validation with friendly, specific errors (slack count, lines to missing buses, `X = 0`, disconnected network, bad numbers).
 - Export: the Study report page downloads the generated report as Markdown.
 
+### Textbook problems (v1.2)
+
+For Saadat / Grainger & Stevenson / Kothari & Nagrath style questions, with the working shown:
+
+- **Problem input**: enter data in real units (system MVA, base kV, Ω or Ω/km × length, µS, µS/km or charging MVAr, MW/MVAr loads, generator MW and |V|, transformer % on own rating). Base kV zones follow the transformer ratios; the page lists every per-unit conversion, then **Load into study**.
+- **Generator Q limits** (Advanced → Study settings, off by default): a PV bus outside Qmin/Qmax becomes PQ at the limit, with a switching log.
+- **Ybus matrix**: rectangular and polar, plus the terms that form each element (series y, y/a, y/a², jB/2, shunts).
+- **Iterations**: Gauss-Seidel voltages per iteration (acceleration factor α), Newton-Raphson mismatch vector, J1–J4 and corrections per iteration, Fast Decoupled B′ and B″.
+- **Worked answer**: textbook-style bus results, slack power, line flows and losses, and a copyable plain-text answer (given data → per unit → Ybus → iterations → results).
+- **Unsymmetrical faults**: 3-phase, SLG, LL, DLG through Zf using sequence Zbus with generator / transformer winding connections (Yg, Y, Δ); sequence and phase voltages at every bus, sequence currents in branches, kA from each bus's own base kV.
+- **Economic dispatch**: λ iteration with quadratic costs, unit limits and B-coefficient losses (penalty factors).
+- **Symmetrical components** and **Line parameters** (short / medium-π / long ABCD, regulation, efficiency, SIL) calculators.
+- Pages are grouped (Load flow, Worked solution, Studies, Calculators, Report); every results page has **Re-run study**, and the header shows amber **STALE** when the case or settings changed since the last run.
+
 ## Project structure
 
 ```
 CAPSA/
 ├── app.py                 Streamlit GUI: pages, modes, dynamic inputs, validation, cached studies
+├── ui_problem.py          Problem input page (real units -> per unit, Load into study)
+├── ui_working.py          Ybus matrix, Iterations and Worked answer pages
+├── ui_topics.py           Unsymmetrical faults, Economic dispatch, Symmetrical components, Line parameters pages
+├── ui_tables.py           editable tables that keep their edits across pages
+├── units.py               real units -> per unit, base kV zones, conversion table
+├── qlimits.py             generator Q limits: PV -> PQ switching around solve_loadflow
+├── working.py             Ybus terms, traced GS / NR (analytical J1..J4) / FD, worked-answer text
+├── seqfaults.py           sequence networks, 3-phase / SLG / LL / DLG faults
+├── symcomp.py             phase <-> sequence (a operator)
+├── dispatch.py            economic dispatch by lambda iteration (limits, B-coefficient losses)
+├── tline.py               line ABCD (short / medium-pi / long), regulation, efficiency
+├── tests/                 pytest suite (per unit, Q limits, traces vs solver, faults, dispatch, ABCD)
 ├── theme.css              the dark palette and all styling as CSS variables
 ├── ui_theme.py            loads theme.css: palette, CSS injection, banner/badges/status bar, matplotlib + Plotly style
 ├── oneline.py             interactive single-line diagram (Plotly): layout, routing, hover, inspector data
@@ -46,13 +72,14 @@ CAPSA/
 ## Execution flow
 
 1. `streamlit run app.py` imports the modules and calls `main()` in `app.py`; `ui_theme.inject()` applies the dark theme CSS and the matplotlib/Plotly styles; `st.navigation` builds the page list; the banner and status bar render on every page.
-2. The sidebar mode selector stages the inputs: **Quick** shows only the case source (preset or CSV upload); **Standard** adds the method, Base MVA and voltage limits; **Advanced** adds the transformer-tap and shunt-columns toggles and the solver tolerance. Every input carries a `help=` tooltip with its unit.
+2. The sidebar mode selector stages the inputs: **Quick** shows only the case source (preset or CSV upload); **Standard** adds a collapsible **Study settings** group with the method, Base MVA and voltage limits; **Advanced** adds the transformer-tap, shunt and generator-Q-limit toggles and the solver tolerance to it. Every input carries a `help=` tooltip with its unit. Base MVA is kept in `_base`, so a case loaded from Problem input brings its own base.
 3. The bus and line tables are `st.data_editor`s over `st.session_state["bus_tbl"]` / `["lines_tbl"]`, seeded from the preset (`cases.py`), replaced by `pd.read_csv` on upload, and edited in place. Hidden `Tap`/`Bs` columns keep their data; `_prep()` fills `Tap = 1`, `Bs = 0` and missing `B` before the solver sees the tables.
 4. Pressing **Run study** (Dashboard, below the case tables) validates first (`_prep` returns friendly problems for a wrong slack count, lines to missing buses, `X = 0`, disconnected networks and non-numeric cells) — on success it calls `solve_loadflow(bus, lines, method, tol)` (`solver.py`), which builds the admittance matrix with `build_ybus`, flat-starts the PQ voltages, dispatches to `newton_raphson`, `fast_decoupled` or `gauss_seidel`, then computes bus injections and per-line flows, returning `(res, flows, ok, hist)`.
 5. All studies run on the same click inside `_study()` (cached with `st.cache_data` on the case and settings): the method-comparison loop, `contingency(bus, lines, vmin, vmax)` and `pv_curve` (`studies.py`). Results and a summary string are stored in `st.session_state["out"]`, and the last solved inputs in a server-wide `st.cache_resource` store so a new browser tab restores them.
 6. The Dashboard renders status badges, six metric cards and the bus/branch tables with the voltage-profile/convergence figures. The Network diagram page draws `oneline.figure(...)` with an inspector panel; the Solver check and N-1 pages show their tables (the N-1 explorer redraws the diagram with the line tripped); the Fault levels page calls `fault_analysis(bus, lines, res, xd, zf, base, kv)` (`studies.py`) with its own Xd'', Zf and base-kV inputs and plots post-fault voltages; the Study report page lists LM Studio models.
 7. On the Study report page, `lm_models()` (`ai_report.py`) lists the models loaded in LM Studio. **Generate report** calls `ai_report(summary, model)`, which posts the summary to the LM Studio chat endpoint; the model phrases the numbers, it does not compute them.
 8. The Study report page has a single **Download study report** button (Markdown), disabled until a report exists.
+9. The worked-solution pages (`ui_working.py`) recompute from the solved case with `working.py`, which repeats the solver's formulas while recording every step (tests check each trace ends on the solver's answer). The topic pages (`ui_topics.py`) call `seqfaults.py`, `dispatch.py`, `symcomp.py` and `tline.py`; dispatch, symmetrical components and line parameters need no solved case.
 
 ```mermaid
 flowchart TD
@@ -87,6 +114,11 @@ flowchart TD
 | Theme, banner, badges or metric cards look wrong | `theme.css`, `ui_theme.py` (`inject`, `mpl_style`, `plotly_style`), `.streamlit/config.toml` |
 | Report fails, or no models listed | `ai_report.py` (`lm_models`, `ai_report`); check LM Studio on port 1234 |
 | Pages, editors or cached results misbehave | `app.py` (`main`, `_page`, `_study`) |
+| Per-unit conversion or zones wrong | `units.py` (`zones`, `to_pu`) |
+| PV -> PQ switching wrong | `qlimits.py` (`solve_with_qlimits`) |
+| Ybus breakdown, iteration tables or worked answer wrong | `working.py` |
+| Sequence fault currents / voltages wrong | `seqfaults.py` (`seq_ybus`, `fault_currents`, `solve_fault`) |
+| Dispatch, symmetrical components or line results wrong | `dispatch.py`, `symcomp.py`, `tline.py` |
 
 ## Setup and run
 
@@ -114,6 +146,9 @@ Bus table:
 | `Pg`, `Qg` | Generator injection |
 | `Pd`, `Qd` | Load |
 | `Bs` | Shunt susceptance |
+| `Qmin`, `Qmax` | Optional generator Q limits (shown and used with Generator Q limits on) |
+| `kV` | Optional base kV (filled by Problem input; used for kA on the Unsymmetrical faults page) |
+| `x`, `y` | Optional one-line diagram position (y grows downward) |
 
 Line table:
 
@@ -124,18 +159,23 @@ Line table:
 | `B` | Total line charging susceptance, split B/2 at each end |
 | `Tap` | Off-nominal tap ratio, 1 = none |
 
+Problem input tables (real units) are documented at the top of `units.py`: buses (MW, MVAr, |V|, Qmin/Qmax, shunt MVAr), lines (Ω or Ω/km with a length, B in µS, µS/km or total charging MVAr) and transformers (rated kV on both sides, MVA rating, R/X in pu on their own rating, tap at the From side).
+
 Results: `res` has `Bus`, `V (pu)`, `Angle (deg)`, `P_inj`, `Q_inj`; `flows` has `From`, `To`, `P_ij`, `Q_ij`, `P_ji`, `Q_ji`, `Loss_P`, `Loss_Q`. For `solve_loadflow`, `len(hist) - 1` is the iteration count.
 
 ## Testing
 
 - `./venv/bin/python check_refactor.py` — the refactor check. It compares the moved function source text, the `CASES` tables, `build_ybus`, `solve_loadflow` for all three methods on both cases, `contingency` and `fault_analysis` against `power_flow_methods.py` and asserts they are exactly identical. Note: that baseline file is currently commented out from top to bottom, so the script stops at import until the original code is restored.
-- `pytest` is listed in `requirements.txt` and installed, but the repository has no test files yet, so `pytest` currently collects nothing.
+- `./venv/bin/python -m pytest` runs the suite in `tests/` (42 tests): per-unit conversion and zones; Q limits (identical results when no limit binds, PV->PQ at Qmax); Ybus terms sum to `build_ybus` and Ybus is symmetric; the analytical Jacobian matches a numerical one; the GS (α = 1, exact), NR and FD traces end on `solve_loadflow`'s answer; GS/NR/FD agree within 1e-4 pu; SLG current = 3Vf/(Z1+Z2+Z0+3Zf), LL/DLG boundary conditions, Δ-Yg zero sequence, per-bus kA; symmetrical-component identities; dispatch (closed-form λ, limits, coordination equations with losses); ABCD reciprocity AD − BC = 1.
+- `./venv/bin/python check_contrast.py` checks every text/background pair of the theme against WCAG AA (4.5:1).
+- Textbook worked examples are not in the suite yet: they need the book's data and printed answers.
 
 ## Limitations
 
-- No generator reactive-power limits and no PV-to-PQ switching when a PV bus hits its Q limit.
-- Fault analysis uses a single base kV (`kv` input) for all buses, so the kA column is wrong on multi-voltage cases such as IEEE 14-bus.
-- Newton-Raphson uses a central-difference numerical Jacobian, which is slower than an analytical one on large cases.
+- Generator Q limits (optional) apply to the main load flow only; N-1, P-V and the solver check still solve without them.
+- The Fault levels page still uses a single base kV for kA; the Unsymmetrical faults page uses each bus's own base kV.
+- Sequence networks are reactance-only and Δ-Y transformer phase shifts (30°) are not modelled.
+- The solver's Newton-Raphson uses a central-difference numerical Jacobian (slower on large cases); the Iterations page uses the analytical one.
 - Gauss-Seidel is called without the `tol` argument inside `solve_loadflow`, so it always runs with its own default tolerance and the method comparison is not exactly at one shared tolerance.
 
 ## License and credits

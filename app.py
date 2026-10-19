@@ -16,9 +16,9 @@ import ui_theme
 import ui_topics
 import ui_working
 from ai_report import ai_report, lm_models
-import oneline
+import figures
 from cases import CASES, COORDS
-from plotting import (convergence_history, fault_voltages,
+from figures import (convergence_history, fault_voltages,
                       pv_curves, voltage_profile)
 from solver import METHODS
 from studies import fault_analysis
@@ -511,7 +511,7 @@ def _diagram(out, key, height, tripped=None, flows=None, res=None,
              show=None, selected=None, on_select="ignore"):
     """Plotly one-line diagram of the solved case (or an outage case)."""
     label = st.session_state.get("case_label")
-    fig = oneline.figure(res if res is not None else out["res"], out["l"],
+    fig = figures.figure(res if res is not None else out["res"], out["l"],
                          out["vmin"], out["vmax"],
                          out["flows"] if flows is None else flows,
                          base=out["base"], bus=out["b"],
@@ -543,7 +543,7 @@ def _tab_network(out):
             st.html(ui_theme.inspector_html("Inspector", [
                 ("Selection", "none"), ("", "click a bus or line")]))
         else:
-            title, rows = oneline.inspect(out["res"], out["l"], out["flows"],
+            title, rows = figures.inspect(out["res"], out["l"], out["flows"],
                                           out["base"], out["b"], sel)
             st.html(ui_theme.inspector_html(title, rows))
             if st.button("Clear selection", key="net_clear"):

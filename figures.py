@@ -1,21 +1,254 @@
-"""Interactive single-line diagram (Plotly), IEEE/IEC style.
+"""GridLens figures: the palette, matplotlib / Plotly styles, the matplotlib
+charts and the interactive one-line diagram. Streamlit-free, so the API server
+can import it. Colours come only from theme.css (:root), the single source.
 
-Buses are horizontal busbars. A branch is a straight line when the two bars
-overlap horizontally (vertical drop) or sit on the same row (end to end),
-otherwise one elbow: down from the upper bar, across into the end of the
-lower bar. Parallel branches get a small fixed offset.
+Roles, not decoration:
+- text/muted  = body and secondary text
+- accent      = the one strong accent: active page, primary buttons,
+                selected options, focus (accent_strong = primary fill)
+- hazard      = yellow rule under the header
+- green/amber/red = status only (badges, violations, pass/fail), each with a
+  dark tinted background and same-hue text that passes WCAG AA
+- c1..c6      = plot data colours
 
-Positions come from, in order: bus columns `x`, `y` (diagram units, y grows
-downward; whole numbers are read as grid column / row), the `coords` passed
-in (layout of a preset case), else a layered layout: rows by BFS depth from
-the slack, order by neighbour barycenter (deterministic).
+Sections: palette -> matplotlib / Plotly styles -> matplotlib charts ->
+one-line diagram (Plotly).
 """
+import re
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-import ui_theme as T
+# ====================================================================== palette
+CSS_FILE = Path(__file__).with_name("theme.css")
 
-P = T.PAL
+
+def _palette(css_text):
+    """Hex colour variables of the :root block; CSS is the single source of
+    truth for every colour."""
+    root = css_text.split(":root", 1)[1].split("}", 1)[0]
+    return {k.replace("-", "_"): v for k, v in
+            re.findall(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})", root)}
+
+
+PAL = _palette(CSS_FILE.read_text())
+PALETTES = {"dark": PAL}
+
+# Every text/background pair the UI uses; check_contrast.py enforces AA (4.5:1).
+CONTRAST_PAIRS = [
+    ("Body text on app background", "text", "bg"),
+    ("Body text on panel", "text", "panel"),
+    ("Body text on sidebar", "text", "side"),
+    ("Body text on input field", "text", "field"),
+    ("Body text on title strip", "text", "hdr"),
+    ("Selected text on selected fill", "sel_text", "sel"),
+    ("Primary button text on its fill", "accent_fg", "accent_strong"),
+    ("Title on header band", "sel_text", "hdr"),
+    ("STALE / amber on header band", "amber", "hdr"),
+    ("Amber note on app background", "amber", "bg"),
+    ("Body text on hover", "text", "hover"),
+    ("Secondary text on app background", "muted", "bg"),
+    ("Secondary text on panel", "muted", "panel"),
+    ("Secondary text on sidebar", "muted", "side"),
+    ("Green status on tinted badge", "green", "green_tint"),
+    ("Amber status on tinted badge", "amber", "amber_tint"),
+    ("Red status on tinted badge", "red", "red_tint"),
+    ("Red status on app background", "red", "bg"),
+    ("Plot text on canvas", "text", "canvas"),
+    ("Plot secondary text on canvas", "muted", "canvas"),
+]
+
+
+# ================================================== matplotlib / Plotly styles
+_MPL_READY = False
+
+
+def mpl_style():
+    """Matplotlib rcParams from the palette (dark canvas, thin boxed spines),
+    set once."""
+    global _MPL_READY
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    if _MPL_READY:
+        return plt
+    p = PAL
+    plt.rcParams.update({
+        "figure.facecolor": p["canvas"], "axes.facecolor": p["canvas"],
+        "savefig.facecolor": p["canvas"], "savefig.edgecolor": p["canvas"],
+        "text.color": p["text"], "axes.labelcolor": p["text"],
+        "axes.edgecolor": p["axis"], "axes.linewidth": 0.7,
+        "xtick.color": p["axis"], "ytick.color": p["axis"],
+        "xtick.labelcolor": p["text"], "ytick.labelcolor": p["text"],
+        "xtick.direction": "in", "ytick.direction": "in",
+        "xtick.major.width": 0.6, "ytick.major.width": 0.6,
+        "grid.color": p["grid"], "grid.linewidth": 0.5,
+        "axes.grid": False, "axes.axisbelow": True,
+        "axes.prop_cycle": matplotlib.cycler(color=[
+            p["c1"], p["c2"], p["c3"], p["c4"], p["c5"], p["c6"]]),
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Segoe UI", "Tahoma", "Arial", "Liberation Sans",
+                            "DejaVu Sans"],
+        "font.size": 8, "axes.labelsize": 8, "axes.titlesize": 8.5,
+        "xtick.labelsize": 7.5, "ytick.labelsize": 7.5, "legend.fontsize": 7.5,
+        "axes.spines.top": True, "axes.spines.right": True,
+        "legend.frameon": True, "legend.facecolor": p["canvas"],
+        "legend.edgecolor": p["axis"], "legend.fancybox": False,
+        "legend.borderpad": 0.4, "figure.dpi": 110,
+    })
+    _MPL_READY = True
+    return plt
+
+
+def plotly_style():
+    """Register the 'gridlens' Plotly template and make it the default."""
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    if pio.templates.default == "gridlens":
+        return
+    p = PAL
+    axis = dict(gridcolor=p["grid"], linecolor=p["axis"], zerolinecolor=p["grid"],
+                tickcolor=p["axis"], showline=True, mirror=True)
+    pio.templates["gridlens"] = go.layout.Template(layout=dict(
+        paper_bgcolor=p["canvas"], plot_bgcolor=p["canvas"],
+        font=dict(color=p["text"], size=11,
+                  family="Segoe UI, Tahoma, Arial, Liberation Sans, sans-serif"),
+        colorway=[p["c1"], p["c2"], p["c3"], p["c4"], p["c5"], p["c6"]],
+        xaxis=axis, yaxis=axis,
+        hoverlabel=dict(bgcolor=p["panel"], bordercolor=p["axis"],
+                        font=dict(color=p["text"], size=11,
+                                  family="Consolas, DejaVu Sans Mono, monospace"),
+                        align="left"),
+        legend=dict(bgcolor=p["canvas"], bordercolor=p["axis"], borderwidth=1,
+                    font=dict(size=10))))
+    pio.templates.default = "gridlens"
+
+
+P = PAL   # short alias used by the charts and the diagram
+
+
+# ============================================================ matplotlib charts
+# All charts share the palette: dark canvas, thin boxed axis, cyan data, red only
+# for limit violations and limits.
+
+def voltage_profile(res, vmin, vmax):
+    """Bus |V| bars in the accent colour, dashed red limit lines."""
+    plt = mpl_style()
+    x = res["Bus"].to_numpy(dtype=float)
+    v = res["V (pu)"].to_numpy(dtype=float)
+    lo = min(vmin, v.min()) - 0.015
+    hi = max(vmax, v.max()) + 0.025
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    ax.bar(x, v - lo, bottom=lo, width=0.6, zorder=2,
+           color=[P["red"] if (y < vmin or y > vmax) else P["c1"]
+                  for y in v])
+    for lim, name, va in ((vmax, "Vmax", "bottom"), (vmin, "Vmin", "top")):
+        ax.axhline(lim, color=P["red"], linestyle="--", lw=1, zorder=3)
+        ax.text(x.max() + 1.45, lim, f"{name} {lim:.2f} ", color=P["red"],
+                fontsize=7.5, ha="right", va=va, zorder=4)
+    ax.set_xticks(x.astype(int))
+    ax.set_xlim(x.min() - 0.6, x.max() + 1.5)
+    ax.set_ylim(lo, hi)
+    ax.set_xlabel("Bus")
+    ax.set_ylabel("|V| (pu)")
+    ax.grid(axis="y", color=P["grid"], lw=0.7, zorder=0)
+    fig.tight_layout()
+    return fig
+
+
+def convergence_history(hist):
+    """Semilogy mismatch error per iteration (NaN sweep-inits are skipped)."""
+    plt = mpl_style()
+    h = np.asarray(list(hist), dtype=float)
+    it = np.arange(1, len(h))
+    y = h[1:]
+    keep = np.isfinite(y) & (y > 0)
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    if keep.any():
+        ax.semilogy(it[keep], y[keep], color=P["c1"], lw=1.8, marker="o",
+                    ms=3.5)
+    ax.set_xlim(0.5, max(len(h) - 0.5, 1.5))
+    ax.set_xticks(np.arange(1, max(len(h), 2)).astype(int))
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Max mismatch (pu)")
+    ax.grid(color=P["grid"], lw=0.7)
+    fig.tight_layout()
+    return fig
+
+
+def fault_voltages(v_pu, vmin, vmax):
+    """Bar chart of post-fault |V| magnitudes (v_pu: Series indexed by bus)."""
+    plt = mpl_style()
+    x = v_pu.index.to_numpy(dtype=float)
+    y = v_pu.to_numpy(dtype=float)
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    ax.bar(x, y, width=0.6, color=P["c1"], zorder=2)
+    top = max(y.max() * 1.15, 0.05)
+    if vmin <= top:     # limit line only when the data reaches near it
+        ax.axhline(vmin, color=P["red"], linestyle="--", lw=1, zorder=3)
+        ax.text(x.max() + 1.45, vmin, f"Vmin {vmin:.2f} ", color=P["red"],
+                fontsize=7.5, ha="right", va="bottom", zorder=4)
+    for xi, yi in zip(x, y):   # the faulted bus collapses to ~0 pu
+        if yi < top * 0.02:
+            ax.text(xi, top * 0.02, "fault", ha="center", va="bottom",
+                    fontsize=7.5, color=P["red"], zorder=4)
+    ax.set_xticks(x.astype(int))
+    ax.set_xlim(x.min() - 0.6, x.max() + 1.5)
+    ax.set_ylim(0, top)
+    ax.set_xlabel("Bus")
+    ax.set_ylabel("Post-fault |V| (pu)")
+    ax.grid(axis="y", color=P["grid"], lw=0.7, zorder=0)
+    fig.tight_layout()
+    return fig
+
+
+def pv_curves(pv, lam_max, vmin, highlight=3):
+    """P-V (nose) curves: |V| vs load multiplier; the weakest buses in
+    red/cyan, the rest dim grey, base case and last solvable point marked.
+    Buses with a held voltage (Slack, PV) are flat lines and are left out."""
+    plt = mpl_style()
+    lam = pv["lambda"].to_numpy(dtype=float)
+    V = pv.drop(columns="lambda")
+    V = V.loc[:, (V.max() - V.min()) > 1e-6]
+    weak = V.iloc[-1].nsmallest(highlight).index
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    for c in V.columns:
+        if c not in weak:
+            ax.plot(lam, V[c], color=P["axis"], lw=1.2, zorder=1)
+    for c, col in zip(weak, (P["red"], P["c1"], P["text"])):
+        ax.plot(lam, V[c], color=col, lw=1.9, label=c, zorder=3)
+    ax.set_xlim(lam.min(), lam_max * 1.04)
+    lo, hi = min(V.values.min(), vmin) - 0.03, V.values.max() + 0.04
+    ax.set_ylim(lo, hi)
+    ax.axvline(1.0, color=P["text"], lw=0.9, ls=":", zorder=2)
+    ax.text(1.0, hi - 0.01, " base case", fontsize=8, va="top",
+            color=P["text"])
+    ax.axvline(lam_max, color=P["red"], lw=0.9, ls="--", zorder=2)
+    ax.text(lam_max, lo + 0.01, f"\u03bb max {lam_max:.2f} ",
+            fontsize=8, ha="right", va="bottom", color=P["red"])
+    ax.axhline(vmin, color=P["red"], lw=0.8, ls=(0, (2, 3)), alpha=0.6)
+    ax.set_xlabel("Load multiplier \u03bb (all loads and generation)")
+    ax.set_ylabel("|V| (pu)")
+    ax.grid(color=P["grid"], lw=0.7)
+    ax.legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+# ================================================= one-line diagram (Plotly)
+# Interactive single-line diagram (Plotly), IEEE/IEC style.
+# 
+# Buses are horizontal busbars. A branch is a straight line when the two bars
+# overlap horizontally (vertical drop) or sit on the same row (end to end),
+# otherwise one elbow: down from the upper bar, across into the end of the
+# lower bar. Parallel branches get a small fixed offset.
+# 
+# Positions come from, in order: bus columns `x`, `y` (diagram units, y grows
+# downward; whole numbers are read as grid column / row), the `coords` passed
+# in (layout of a preset case), else a layered layout: rows by BFS depth from
+# the slack, order by neighbour barycenter (deterministic).
+
 GAP_X = 3.0       # between bars in the layered fallback
 ROW_Y = 5.0       # between rows
 GRID_X, GRID_Y = 7.0, 5.0   # grid column / row size for whole-number x, y
@@ -313,7 +546,7 @@ def figure(res, lines, vmin, vmax, flows=None, base=100.0, bus=None,
     selected: ("bus", i) or ("line", k) to highlight. Click targets carry
     customdata [kind, index]."""
     import plotly.graph_objects as go
-    T.plotly_style()
+    plotly_style()
     show = {"loads", "gens"} if show is None else set(show)
     n = len(res)
     edges = [(int(a) - 1, int(b) - 1) for a, b in zip(lines["From"], lines["To"])]

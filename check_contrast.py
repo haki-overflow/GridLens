@@ -1,13 +1,13 @@
 """WCAG AA contrast check for the GridLens palette.
 
-Checks every text/background pair in ui_theme.CONTRAST_PAIRS for the
+Checks every text/background pair in figures.CONTRAST_PAIRS for the
 palette and exits non-zero if any pair is below 4.5:1.
 
 Run:  venv/bin/python check_contrast.py
 """
 import sys
 
-from ui_theme import CONTRAST_PAIRS, PALETTES
+from figures import CONTRAST_PAIRS, PALETTES
 
 MIN_RATIO = 4.5
 

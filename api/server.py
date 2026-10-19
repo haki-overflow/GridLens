@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 import dispatch as D
 import gridcore
-import oneline
+import figures
 import seqfaults as SF
 import symcomp as SC
 import tline as TL
@@ -224,7 +224,7 @@ def study(case: Case):
 def layout(case: Case):
     b, l, _ = _prep(case)
     edges = [(int(f) - 1, int(t) - 1) for f, t in zip(l["From"], l["To"])]
-    g = _guard(lambda: oneline.layout(len(b), edges, b, COORDS.get(case.name)),
+    g = _guard(lambda: figures.layout(len(b), edges, b, COORDS.get(case.name)),
                "Layout")
     return to_json(g)
 

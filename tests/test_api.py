@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import dispatch as D
 import gridcore
-import oneline
+import figures
 import seqfaults as SF
 import symcomp as SC
 import tline as TL
@@ -88,7 +88,7 @@ def test_malformed_body_is_422_without_trace():
 def test_layout(case, prepped):
     b, l = prepped
     edges = [(int(f) - 1, int(t) - 1) for f, t in zip(l["From"], l["To"])]
-    assert post("/api/layout", case) == to_json(oneline.layout(len(b), edges, b))
+    assert post("/api/layout", case) == to_json(figures.layout(len(b), edges, b))
 
 
 def test_outage(case, prepped):

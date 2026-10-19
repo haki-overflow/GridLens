@@ -38,6 +38,26 @@ registerDoc("canvas", (el) => {
   interface OutageData { k: number; sig: string | null; res: Rec[]; flows: Rec[] }
   let outageData: OutageData | null = null;
   let outageAsked = "";
+  const tools = h("div", "canvas-tools");
+  const opt = (label: string, title: string, on: () => void) => {
+    const b = h("button", "ctool", label);
+    b.type = "button";
+    b.title = title;
+    b.addEventListener("click", (e) => { e.stopPropagation(); on(); });
+    tools.append(b);
+    return b;
+  };
+  const toggle = (k: "grid" | "flows" | "angles") => () => {
+    const v = getState().view;
+    setState({ view: { ...v, [k]: !v[k] } });
+  };
+  opt("Fit", "Fit the diagram to the window (Ctrl+0)", () => window.dispatchEvent(new CustomEvent("gl:fit")));
+  const optBtns: [string, HTMLButtonElement][] = [
+    ["grid", opt("Grid", "Show the drawing grid", toggle("grid"))],
+    ["flows", opt("Flows", "Show line flows (MW)", toggle("flows"))],
+    ["angles", opt("Angles", "Show bus voltage angles", toggle("angles"))],
+  ];
+  wrap.append(tools);
   const chip = h("div", "outage-chip");
   chip.hidden = true;
   chip.title = "Click to clear";
@@ -72,6 +92,11 @@ registerDoc("canvas", (el) => {
   }).observe(wrap);
 
   const draw = (s: State) => {
+    for (const [k, b] of optBtns) {
+      const on = s.view[k as "grid" | "flows" | "angles"];
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
     if (!layout || !s.case) {
       gBranch.selectAll("*").remove();
       gBus.selectAll("*").remove();

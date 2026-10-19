@@ -1,6 +1,6 @@
 // Documents: registry, study views, textbook wizard.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { DEFAULT_SETTINGS, get, getState, isStale, log, post, report, setState, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
+import { DEFAULT_SETTINGS, get, getState, isStale, log, navigate, post, report, setState, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
 import { phasorDiagram, stackedPlot } from "./charts";
 import { type DocDef } from "./shell";
 import { NEED_RUN, cards, csv, download, field, fmt, h, headline, matrix, notice, numIn, section, selectIn, subtabs, table, title, zip } from "./ui";
@@ -186,7 +186,19 @@ resultsDoc("contingency", "Contingency N-1", "Each line removed in turn, case re
         : `Worst outage: line ${w.Outage} → min |V| ${fmt(w["Min V (pu)"], 3)} pu at bus ${w["At bus"]}. ${bad.length} of ${r.n1.length} outages insecure.`,
       bad.length ? "bad" : "ok"));
     }
-    el.append(table(r.n1, { bad: (x) => x.Status !== "OK" || n(x.Violations) > 0 }));
+    const tbl = table(r.n1, { bad: (x) => x.Status !== "OK" || n(x.Violations) > 0 });
+    const lines = (getState().case?.lines ?? []).map((l) => `${l.From}-${l.To}`);
+    Array.from(tbl.querySelectorAll("tr")).slice(1).forEach((tr, i) => {
+      const k = lines.indexOf(String(r.n1[i]?.Outage));
+      if (k < 0) return;
+      tr.classList.add("click");
+      tr.title = "Show this outage on the diagram";
+      tr.addEventListener("click", () => {
+        setState({ outage: getState().outage === k ? null : k });
+        navigate("canvas");
+      });
+    });
+    el.append(h("p", "cap", "Click a row to show that outage on the diagram (the tripped line is dashed)."), tbl);
   });
 
 // --------------------------------------------------------------- PV analysis

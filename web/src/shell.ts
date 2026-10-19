@@ -1,6 +1,6 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State, type View } from "./app";
+import { VIEWS, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
 import { ICON, h } from "./ui";
@@ -246,55 +246,68 @@ export function fitCanvas(): void {
   window.dispatchEvent(new CustomEvent("gl:fit"));
 }
 
+/** A small dropdown menu button: items = [label, action, disabled?]. Closes
+ *  on outside click, Escape or after choosing. */
+function menu(label: string, title: string, items: () => [string, () => void, boolean?][]): HTMLElement {
+  const wrap = h("div", "tb-menu");
+  const b = btn(ICON.open, label, title);
+  b.append(h("span", "caret", "▾"));
+  const pop = h("div", "tb-pop");
+  pop.hidden = true;
+  pop.setAttribute("role", "menu");
+  const close = () => { pop.hidden = true; b.setAttribute("aria-expanded", "false"); };
+  b.setAttribute("aria-haspopup", "menu");
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!pop.hidden) { close(); return; }
+    pop.replaceChildren(...items().map(([text, act, off]) => {
+      const it = h("button", "tb-item", text);
+      it.type = "button";
+      it.disabled = !!off;
+      it.setAttribute("role", "menuitem");
+      it.addEventListener("click", () => { close(); act(); });
+      return it;
+    }));
+    pop.hidden = false;
+    b.setAttribute("aria-expanded", "true");
+  });
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  wrap.append(b, pop);
+  return wrap;
+}
+
 export function mountToolbar(bar: HTMLElement): void {
   const runB = btn(ICON.run, "Run", "Run the load flow and every study (F5)", "run");
   runB.classList.add("primary");
   const stale = h("span", "badge stale", "STALE");
   stale.title = "The case changed since the last run";
-  const resetB = btn(ICON.reset, "Reset", "Clear results and reload the preset");
+  const resetB = btn(ICON.reset, "Reset", "Clear results and reload the example");
 
   const sel = h("select", "tb-select");
-  sel.title = "Preset case";
-  sel.setAttribute("aria-label", "Preset case");
-  const textB = btn(ICON.report, "Textbook", "New case from textbook data in real units (MVA, kV, ohm)");
-  const importB = btn(ICON.open, "Import", "Open a .gridlens.json project");
-  const exportB = btn(ICON.save, "Export", "Save the case as .gridlens.json");
+  sel.title = "Example networks";
+  sel.setAttribute("aria-label", "Example networks");
   const file = h("input");
   file.type = "file";
   file.accept = ".json,.gridlens.json,application/json";
   file.hidden = true;
+  const fileMenu = menu("File", "Textbook data, open, save, download results", () => [
+    ["Enter textbook data...", () => void openWizard()],
+    ["Open project...", () => file.click()],
+    ["Save project", exportProject, !getState().case],
+    ["Download results (.zip)", () => navigate("report"), !getState().results],
+  ]);
 
-  const fitB = btn(ICON.fit, "Fit", "Fit the diagram to the window (Ctrl+0)");
-  const toggles: [keyof View, HTMLButtonElement][] = [
-    ["grid", btn(ICON.grid, "Grid", "Show the drawing grid")],
-    ["flows", btn(ICON.flows, "Flows", "Show line flows (MW) on the diagram")],
-    ["angles", btn(ICON.angles, "Angles", "Show bus voltage angles on the diagram")],
-  ];
-  const reportB = btn(ICON.report, "Report", "Open the study report");
-
-  bar.append(
-    group(runB, stale), group(resetB), group(sel, textB, importB, exportB, file),
-    group(fitB, ...toggles.map(([, b]) => b)), group(reportB));
+  bar.append(group(runB, stale, resetB), group(sel, fileMenu, file));
 
   runB.addEventListener("click", () => void run());
   resetB.addEventListener("click", () => void reset());
   sel.addEventListener("change", () => void loadPreset(sel.value));
-  textB.addEventListener("click", () => void openWizard());
-  importB.addEventListener("click", () => file.click());
   file.addEventListener("change", async () => {
     const f = file.files?.[0];
     file.value = "";
-    if (f) await importProject(f).catch((e) => report(e, `Importing ${f.name}`));
+    if (f) await importProject(f).catch((e) => report(e, `Opening ${f.name}`));
   });
-  exportB.addEventListener("click", exportProject);
-  fitB.addEventListener("click", fitCanvas);
-  for (const [k, b] of toggles) {
-    b.addEventListener("click", () => {
-      const v = getState().view;
-      setState({ view: { ...v, [k]: !v[k] } });
-    });
-  }
-  reportB.addEventListener("click", () => navigate("report"));
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "F5") {
@@ -311,11 +324,6 @@ export function mountToolbar(bar: HTMLElement): void {
     const s = getState();
     stale.hidden = !isStale(s);
     runB.disabled = !s.case;
-    exportB.disabled = !s.case;
-    for (const [k, b] of toggles) {
-      b.classList.toggle("on", s.view[k]);
-      b.setAttribute("aria-pressed", String(s.view[k]));
-    }
     if (s.case) {
       if (![...sel.options].some((o) => o.value === s.case!.name)) {
         const o = h("option", "", s.case.name);
@@ -341,7 +349,7 @@ export function mountToolbar(bar: HTMLElement): void {
       sel.prepend(o);
     }
     paint();
-  }).catch((e) => report(e, "Listing presets"));
+  }).catch((e) => report(e, "Listing examples"));
 }
 
 // ---- chrome ------------------------------------------------------------

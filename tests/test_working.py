@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import working as W
-from cases import CASES
+from gridcore import CASES
 from solver import build_ybus, gauss_seidel, solve_loadflow
 
 CASE_LIST = list(CASES)

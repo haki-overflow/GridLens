@@ -11,11 +11,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import dispatch as D
-import seqfaults as SF
-import symcomp as SC
-import tline as TL
-import units
+import topics
 import working as W
 from figures import CSS_FILE, mpl_style, plotly_style
 from solver import METHODS, build_ybus
@@ -129,7 +125,7 @@ def editor(where, name, default, seed=None, **kw):
 # Problem input page: textbook-style data in real units -> per unit.
 # 
 # The user types the data the way a textbook question gives it (MVA, kV,
-# ohms, ohms/km, µS, MVAr, MW); units.to_pu converts it and every converted
+# ohms, ohms/km, µS, MVAr, MW); topics.to_pu converts it and every converted
 # value is listed so it can be checked against a hand calculation. "Load
 # into study" hands the per-unit tables to the main case.
 # ============================================================================
@@ -140,12 +136,12 @@ TABLES = ("buses", "lines", "trafos")
 def _init():
     ss = st.session_state
     for k in ("sbase", "ref_bus", "ref_kv"):
-        ss.setdefault(f"prob_{k}", units.EXAMPLE[k])
+        ss.setdefault(f"prob_{k}", topics.UNITS_EXAMPLE[k])
 
 
 def _editor(where, name, column_config):
     editor(where, f"prob_{name}",
-                     lambda: units.EXAMPLE[name].copy(), num_rows="dynamic",
+                     lambda: topics.UNITS_EXAMPLE[name].copy(), num_rows="dynamic",
                      column_config=column_config)
 
 
@@ -180,9 +176,9 @@ def page_problem(load):
     _editor(tl, "lines", {
         "From": st.column_config.NumberColumn(step=1),
         "To": st.column_config.NumberColumn(step=1),
-        "Z unit": st.column_config.SelectboxColumn(options=list(units.Z_UNITS)),
+        "Z unit": st.column_config.SelectboxColumn(options=list(topics.Z_UNITS)),
         "B unit": st.column_config.SelectboxColumn(
-            options=list(units.B_UNITS),
+            options=list(topics.B_UNITS),
             help="µS total, µS/km (× Length), or MVAr total charging."),
         "Length": st.column_config.NumberColumn("Length (km)")})
     _editor(tt, "trafos", {
@@ -195,7 +191,7 @@ def page_problem(load):
 
     try:
         t = {k: ss[f"tbl_prob_{k}"] for k in TABLES}
-        r = units.to_pu(ss["prob_sbase"], ss["prob_ref_bus"], ss["prob_ref_kv"],
+        r = topics.to_pu(ss["prob_sbase"], ss["prob_ref_bus"], ss["prob_ref_kv"],
                         t["buses"], t["lines"], t["trafos"])
     except Exception as e:
         st.error(f"Cannot convert: {e}")
@@ -248,7 +244,7 @@ def page_seqfault(out):
     n = len(bus)
     seed = (n, tuple(zip(lines["From"], lines["To"])))
     c = st.columns([1.6, 0.8, 0.7, 0.7, 1.6], vertical_alignment="bottom")
-    kind = c[0].segmented_control("Fault type", SF.TYPES, default="SLG",
+    kind = c[0].segmented_control("Fault type", topics.TYPES, default="SLG",
                                   key="sf_kind") or "SLG"
     k = c[1].selectbox("Fault bus", list(range(1, n + 1)), key="sf_bus")
     zr = c[2].number_input("Zf R (pu)", 0.0, 10.0, 0.0, key="sf_zr")
@@ -260,7 +256,7 @@ def page_seqfault(out):
             1j * np.radians(out["res"]["Angle (deg)"].to_numpy()))
     zf = complex(zr, zx)
 
-    g0, b0 = SF.seed_tables(bus, lines)
+    g0, b0 = topics.seed_tables(bus, lines)
     kv0 = bus["kV"].astype(float) if "kV" in bus else pd.Series([33.0] * n)
     kv_default = lambda: pd.DataFrame({"Bus": np.arange(1, n + 1),
                                        "kV": kv0.values})
@@ -271,8 +267,8 @@ def page_seqfault(out):
     kvt = table("sf_kv", kv_default, seed)
     try:
         kv = kvt["kV"].astype(float).to_numpy()
-        tab = SF.fault_table(kind, gens, br, vf, zf, out["base"], kv)
-        r = SF.solve_fault(kind, k, gens, br, vf, zf, out["base"], kv)
+        tab = topics.fault_table(kind, gens, br, vf, zf, out["base"], kv)
+        r = topics.solve_fault(kind, k, gens, br, vf, zf, out["base"], kv)
     except Exception as e:
         st.error(f"Cannot build the sequence networks: {e}")
         return
@@ -342,7 +338,7 @@ def _phasors(prefix, key, defaults):
     for col, (name, (m, d)) in zip(cols, zip(prefix, defaults)):
         mm = col.number_input(f"|{name}|", value=m, key=f"{key}_{name}_m", format="%.4f")
         dd = col.number_input(f"∠{name} (°)", value=d, key=f"{key}_{name}_a", format="%.2f")
-        vals.append(SC.polar(mm, dd))
+        vals.append(topics.polar(mm, dd))
     return np.array(vals)
 
 
@@ -354,7 +350,7 @@ def page_symcomp(out=None):
         st.html(section("Phase → sequence"))
         abc = _phasors(["Va", "Vb", "Vc"], "sc_p",
                        [(1.0, 0.0), (0.8, -110.0), (1.1, 125.0)])
-        s = SC.to_sequence(abc)
+        s = topics.to_sequence(abc)
         st.dataframe(pd.DataFrame({"Component": ["V0 (zero)", "V1 (positive)",
                                                  "V2 (negative)"],
                                    "Polar": [pfmt(v) for v in s],
@@ -365,7 +361,7 @@ def page_symcomp(out=None):
         st.html(section("Sequence → phase"))
         s2 = _phasors(["V0", "V1", "V2"], "sc_s",
                       [(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)])
-        p = SC.to_phase(s2)
+        p = topics.to_phase(s2)
         st.dataframe(pd.DataFrame({"Phase": ["Va", "Vb", "Vc"],
                                    "Polar": [pfmt(v) for v in p],
                                    "Rectangular": [cfmt(v) for v in p]}),
@@ -374,16 +370,16 @@ def page_symcomp(out=None):
     a_, b_ = st.columns(2, gap="large")
     lab = ["0", "1", "2"]
     a_.caption("A (sequence → phase)")
-    a_.dataframe(pd.DataFrame([[pfmt(v, 3) for v in r] for r in SC.A],
+    a_.dataframe(pd.DataFrame([[pfmt(v, 3) for v in r] for r in topics.A],
                               index=["a", "b", "c"], columns=lab))
     b_.caption("A⁻¹ (phase → sequence)")
-    b_.dataframe(pd.DataFrame([[pfmt(v, 4) for v in r] for r in SC.A_INV],
+    b_.dataframe(pd.DataFrame([[pfmt(v, 4) for v in r] for r in topics.A_INV],
                               index=lab, columns=["a", "b", "c"]))
 
 
 # --------------------------------------------------------- economic dispatch
 def page_dispatch(out=None):
-    e = D.EXAMPLE
+    e = topics.DISPATCH_EXAMPLE
     c = st.columns([0.9, 1.3, 1.3, 0.9, 1.6], vertical_alignment="bottom")
     PD = c[0].number_input("Demand PD (MW)", 0.0, 1e6, e["PD"], key="ed_pd")
     loss = c[1].segmented_control("Losses", ["None", "B-coefficients"],
@@ -414,9 +410,9 @@ def page_dispatch(out=None):
         B00 = right.number_input("B00", value=e["B00"], format="%.8f", key="ed_b00")
         B, B0 = Bt.to_numpy(float), b0t.to_numpy(float)[0]
         if unit == "pu":
-            B, B0, B00 = D.b_from_pu(B, B0, B00, base)
+            B, B0, B00 = topics.b_from_pu(B, B0, B00, base)
     try:
-        r = D.dispatch(units, PD, B, B0, B00, use_limits=lim, tol=1e-6)
+        r = topics.dispatch(units, PD, B, B0, B00, use_limits=lim, tol=1e-6)
     except Exception as ex:
         st.error(f"Cannot dispatch: {ex}")
         return
@@ -437,7 +433,7 @@ def page_dispatch(out=None):
 # ------------------------------------------------------ transmission lines
 def page_tline(out=None):
     c = st.columns(4, vertical_alignment="bottom")
-    model = c[0].segmented_control("Model", TL.MODELS, default="medium (π)",
+    model = c[0].segmented_control("Model", topics.MODELS, default="medium (π)",
                                    key="tl_model") or "medium (π)"
     L = c[1].number_input("Length (km)", 0.1, 5000.0, 150.0, key="tl_len")
     lag = c[2].segmented_control("Power factor", ["lagging", "leading"],
@@ -450,7 +446,7 @@ def page_tline(out=None):
     VR = d[3].number_input("V_R (kV, line)", 0.1, 2000.0, 220.0, key="tl_vr")
     PR = d[4].number_input("P_R (MW, 3-phase)", 0.0, 1e5, 150.0, key="tl_pr")
     try:
-        r = TL.performance(model, R, X, B, L, VR, PR, pf, lag)
+        r = topics.performance(model, R, X, B, L, VR, PR, pf, lag)
     except Exception as ex:
         st.error(f"Cannot compute: {ex}")
         return
@@ -477,8 +473,8 @@ def page_tline(out=None):
                     hide_index=True)
     st.html(section("All three models for the same line"))
     cmp = []
-    for m in TL.MODELS:
-        q = TL.performance(m, R, X, B, L, VR, PR, pf, lag)
+    for m in topics.MODELS:
+        q = topics.performance(m, R, X, B, L, VR, PR, pf, lag)
         cmp.append([m, q["VS_LL"], abs(q["IS"]) * 1e3, q["reg"], q["eff"]])
     st.dataframe(pd.DataFrame(cmp, columns=["Model", "V_S (kV)", "I_S (A)",
                                             "Regulation (%)", "Efficiency (%)"])

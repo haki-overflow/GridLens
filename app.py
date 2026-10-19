@@ -11,10 +11,10 @@ import pandas as pd
 import streamlit as st
 
 import gridcore
-from ai_report import ai_report, lm_models
+from gridcore import ai_report, lm_models
 import figures
 import ui
-from cases import CASES, COORDS
+from gridcore import CASES, COORDS
 from figures import (convergence_history, fault_voltages,
                       pv_curves, voltage_profile)
 from solver import METHODS

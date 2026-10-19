@@ -3,10 +3,12 @@
 Checks every text/background pair in figures.CONTRAST_PAIRS for the
 palette and exits non-zero if any pair is below 4.5:1.
 
-Run:  venv/bin/python check_contrast.py
+Run:  python tools/check_contrast.py
 """
 import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from figures import CONTRAST_PAIRS, PALETTES
 
 MIN_RATIO = 4.5

@@ -2,9 +2,9 @@
 import numpy as np
 import pytest
 
-import units
-from cases import CASES
-from qlimits import solve_with_qlimits
+import topics
+from gridcore import CASES
+from solver import solve_with_qlimits
 from solver import solve_loadflow
 
 
@@ -19,8 +19,8 @@ def test_no_limits_gives_identical_results(name):
 
 
 def test_pv_bus_switches_to_pq_at_qmax():
-    e = units.EXAMPLE
-    r = units.to_pu(e["sbase"], e["ref_bus"], e["ref_kv"], e["buses"],
+    e = topics.UNITS_EXAMPLE
+    r = topics.to_pu(e["sbase"], e["ref_bus"], e["ref_kv"], e["buses"],
                     e["lines"], e["trafos"])
     res, flows, ok, _, b, log = solve_with_qlimits(r["bus"], r["lines"])
     assert ok and [x["Bus"] for x in log] == [4]

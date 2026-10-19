@@ -6,17 +6,13 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-import dispatch as D
 import gridcore
 import figures
-import seqfaults as SF
-import symcomp as SC
-import tline as TL
-import units
+import topics
 import working as W
 from api.schema import to_json
 from api.server import app
-from cases import CASES
+from gridcore import CASES
 from solver import build_ybus, solve_loadflow
 from studies import fault_analysis
 
@@ -109,12 +105,12 @@ def test_fault(case, prepped):
 
 def test_seqfault(case, prepped):
     b, l = prepped
-    g, br = SF.seed_tables(b, l)
+    g, br = topics.seed_tables(b, l)
     vf, kv = np.ones(len(b), complex), np.full(len(b), 33.0)
-    r = SF.solve_fault("SLG", 1, g, br, vf, 0j, 100.0, kv)
+    r = topics.solve_fault("SLG", 1, g, br, vf, 0j, 100.0, kv)
     out = post("/api/seqfault", {"case": case, "kind": "SLG", "bus": 1})
     assert out["Iabc"] == to_json(r["Iabc"]) and out["kA"] == to_json(r["kA"])
-    assert out["table"] == to_json(SF.fault_table("SLG", g, br, vf, 0j, 100.0, kv))
+    assert out["table"] == to_json(topics.fault_table("SLG", g, br, vf, 0j, 100.0, kv))
     # SLG = 3 Vf / (Z1 + Z2 + Z0)
     I = out["Iabc"][0]
     assert abs(complex(I["re"], I["im"]) - 3 / sum(r["Zth"])) < 1e-12
@@ -147,11 +143,11 @@ def test_answer(case, prepped):
 
 
 def test_dispatch():
-    e = D.EXAMPLE
+    e = topics.DISPATCH_EXAMPLE
     body = {"units": to_json(e["units"]), "PD": e["PD"], "B": e["B"],
             "B0": e["B0"], "B00": e["B00"], "pu_base": e["base"]}
-    B, B0, B00 = D.b_from_pu(e["B"], e["B0"], e["B00"], e["base"])
-    ref = D.dispatch(e["units"], e["PD"], B, B0, B00)
+    B, B0, B00 = topics.b_from_pu(e["B"], e["B0"], e["B00"], e["base"])
+    ref = topics.dispatch(e["units"], e["PD"], B, B0, B00)
     assert post("/api/dispatch", body) == to_json(ref)
 
 
@@ -159,10 +155,10 @@ def test_symcomp():
     abc = [{"mag": 1.0, "deg": 0.0}, {"mag": 0.8, "deg": -110.0},
            {"mag": 1.1, "deg": 125.0}]
     out = post("/api/symcomp", {"abc": abc, "s012": [0, 1, 0]})
-    ref = SC.to_sequence([SC.polar(1.0, 0.0), SC.polar(0.8, -110.0),
-                          SC.polar(1.1, 125.0)])
+    ref = topics.to_sequence([topics.polar(1.0, 0.0), topics.polar(0.8, -110.0),
+                          topics.polar(1.1, 125.0)])
     assert out["s012"] == to_json(ref)
-    assert out["abc"] == to_json(SC.to_phase([0, 1, 0]))
+    assert out["abc"] == to_json(topics.to_phase([0, 1, 0]))
     assert client.post("/api/symcomp", json={}).status_code == 422
 
 
@@ -170,17 +166,17 @@ def test_tline():
     p = dict(model="long", R=0.1, X=0.5, B_uS=3.2, length=300.0, VR_kV=220.0,
              PR_MW=150.0, pf=0.85, lagging=True)
     out = post("/api/tline", p)
-    assert out["performance"] == to_json(TL.performance(**p))
-    A, B, C, Dd = TL.abcd("long", 0.1, 0.5, 3.2, 300.0)
+    assert out["performance"] == to_json(topics.performance(**p))
+    A, B, C, Dd = topics.abcd("long", 0.1, 0.5, 3.2, 300.0)
     assert out["abcd"] == to_json(dict(A=A, B=B, C=C, D=Dd))
 
 
 def test_topu():
-    e = units.EXAMPLE
+    e = topics.UNITS_EXAMPLE
     body = {"sbase": e["sbase"], "ref_bus": e["ref_bus"], "ref_kv": e["ref_kv"],
             "buses": to_json(e["buses"]), "lines": to_json(e["lines"]),
             "trafos": to_json(e["trafos"])}
-    ref = units.to_pu(e["sbase"], e["ref_bus"], e["ref_kv"], e["buses"],
+    ref = topics.to_pu(e["sbase"], e["ref_bus"], e["ref_kv"], e["buses"],
                       e["lines"], e["trafos"])
     assert post("/api/topu", body) == to_json(ref)
 
@@ -204,8 +200,8 @@ def test_root_serves_web_build(tmp_path, monkeypatch):
 # ------------------------------------------------- workspace extras (v1.3)
 def test_units_example_matches_module():
     d = client.get("/api/units/example").json()
-    assert d["sbase"] == units.EXAMPLE["sbase"] and d["ref_bus"] == units.EXAMPLE["ref_bus"]
-    assert d["z_units"] == list(units.Z_UNITS) and d["b_units"] == list(units.B_UNITS)
+    assert d["sbase"] == topics.UNITS_EXAMPLE["sbase"] and d["ref_bus"] == topics.UNITS_EXAMPLE["ref_bus"]
+    assert d["z_units"] == list(topics.Z_UNITS) and d["b_units"] == list(topics.B_UNITS)
     body = dict(sbase=d["sbase"], ref_bus=d["ref_bus"], ref_kv=d["ref_kv"],
                 buses=d["buses"], lines=d["lines"], trafos=d["trafos"])
     r = client.post("/api/topu", json=body)
@@ -213,13 +209,13 @@ def test_units_example_matches_module():
 
 
 def test_lm_models_empty_without_server(monkeypatch):
-    import ai_report
+    import gridcore as ai_report
     monkeypatch.setattr(ai_report, "lm_models", lambda url=None: [])
     assert client.get("/api/lm/models").json()["models"] == []
 
 
 def test_report_says_when_lm_studio_is_down(monkeypatch):
-    import ai_report
+    import gridcore as ai_report
     import requests
 
     def down(*a, **k):
@@ -230,6 +226,6 @@ def test_report_says_when_lm_studio_is_down(monkeypatch):
 
 
 def test_report_returns_the_models_text(monkeypatch):
-    import ai_report
+    import gridcore as ai_report
     monkeypatch.setattr(ai_report, "ai_report", lambda s, m: f"{m}:{s}")
     assert client.post("/api/report", json={"summary": "S", "model": "M"}).json() == {"text": "M:S"}

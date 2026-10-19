@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# names renamed on purpose during the merges (old -> new)
+RENAMED = {"page": ["page_problem"], "EXAMPLE": ["DISPATCH_EXAMPLE", "UNITS_EXAMPLE"]}
 SKIP = {"venv", "node_modules", "legacy", "tests", "__pycache__", "dist"}
 
 
@@ -32,7 +34,7 @@ TS = re.compile(r"^(?:export\s+)?(?:async\s+)?(?:function|class|const|let|interf
 
 def scan():
     names = {}
-    files = [p for p in ROOT.glob("*.py")] + list((ROOT / "api").glob("*.py"))
+    files = list(ROOT.glob("*.py")) + [p for d in ("api", "tools", "legacy") for p in (ROOT / d).glob("*.py")]
     for p in files:
         names[str(p.relative_to(ROOT))] = py_names(p)
     for p in (ROOT / "web" / "src").glob("*.ts"):
@@ -60,7 +62,8 @@ def main():
             print("  ", n, "->", ", ".join(f))
         return 0
     old, new = flatten(json.loads(path.read_text())), flatten(scan())
-    lost = sorted(set(old) - set(new))
+    lost = sorted(n for n in set(old) - set(new)
+                  if not all(r in new for r in RENAMED.get(n, [])) or n not in RENAMED)
     print("lost:", lost or "none")
     extra_dup = {n: f for n, f in new.items() if len(f) > 1 and len(old.get(n, [])) <= 1}
     print("newly duplicated:", extra_dup or "none")

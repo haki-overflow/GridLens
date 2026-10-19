@@ -12,23 +12,18 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-import pandas as pd
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-import dispatch as D
 import gridcore
 import figures
-import seqfaults as SF
-import symcomp as SC
-import tline as TL
-import units
+import topics
 import working as W
-from cases import CASES, COORDS
-from qlimits import solve_with_qlimits
+from gridcore import CASES, COORDS
+from solver import solve_with_qlimits
 from solver import build_ybus, solve_loadflow
 from studies import fault_analysis
 
@@ -252,7 +247,7 @@ def fault(body: FaultIn):
 def seqfault(body: SeqFaultIn):
     b, l, res, *_ = _loadflow(body.case)
     n = len(b)
-    g0, b0 = SF.seed_tables(b, l)
+    g0, b0 = topics.seed_tables(b, l)
     gens = frame(body.gens) if body.gens is not None else g0
     br = frame(body.branches) if body.branches is not None else b0
     kv = np.asarray(body.kv, float) if body.kv is not None else (
@@ -262,8 +257,8 @@ def seqfault(body: SeqFaultIn):
     zf, base = complex_in(body.zf), body.case.settings.base
 
     def run():
-        r = SF.solve_fault(body.kind, body.bus, gens, br, vf, zf, base, kv)
-        return r, SF.fault_table(body.kind, gens, br, vf, zf, base, kv)
+        r = topics.solve_fault(body.kind, body.bus, gens, br, vf, zf, base, kv)
+        return r, topics.fault_table(body.kind, gens, br, vf, zf, base, kv)
     r, tab = _guard(run, "Sequence fault")
     return {**to_json(r), "table": to_json(tab), "gens": to_json(gens),
             "branches": to_json(br), "kv": to_json(kv)}
@@ -311,9 +306,9 @@ def dispatch(body: DispatchIn):
     def run():
         B, B0, B00 = body.B, body.B0, body.B00
         if body.pu_base and B is not None:
-            B, B0, B00 = D.b_from_pu(B, B0 if B0 is not None else [0.0] * len(B),
+            B, B0, B00 = topics.b_from_pu(B, B0 if B0 is not None else [0.0] * len(B),
                                      B00, body.pu_base)
-        return D.dispatch(frame(body.units), body.PD, B, B0, B00,
+        return topics.dispatch(frame(body.units), body.PD, B, B0, B00,
                           use_limits=body.use_limits, tol=body.tol)
     return to_json(_guard(run, "Dispatch"))
 
@@ -325,10 +320,10 @@ def symcomp(body: SymIn):
                         "(sequence -> phase), three phasors each."])
     out = {}
     if body.abc is not None:
-        out["s012"] = to_json(_guard(lambda: SC.to_sequence(
+        out["s012"] = to_json(_guard(lambda: topics.to_sequence(
             [complex_in(v) for v in body.abc]), "to_sequence"))
     if body.s012 is not None:
-        out["abc"] = to_json(_guard(lambda: SC.to_phase(
+        out["abc"] = to_json(_guard(lambda: topics.to_phase(
             [complex_in(v) for v in body.s012]), "to_phase"))
     return out
 
@@ -338,14 +333,14 @@ def tline(body: TLineIn):
     p = body.model_dump()
 
     def run():
-        A, B, C, Dd = TL.abcd(p["model"], p["R"], p["X"], p["B_uS"], p["length"])
-        return dict(abcd=dict(A=A, B=B, C=C, D=Dd), performance=TL.performance(**p))
+        A, B, C, Dd = topics.abcd(p["model"], p["R"], p["X"], p["B_uS"], p["length"])
+        return dict(abcd=dict(A=A, B=B, C=C, D=Dd), performance=topics.performance(**p))
     return to_json(_guard(run, "Line calculation"))
 
 
 @app.post("/api/topu")
 def topu(body: ToPuIn):
-    r = _guard(lambda: units.to_pu(body.sbase, body.ref_bus, body.ref_kv,
+    r = _guard(lambda: topics.to_pu(body.sbase, body.ref_bus, body.ref_kv,
                                    frame(body.buses), frame(body.lines),
                                    frame(body.trafos)), "Per-unit conversion")
     return to_json(r)
@@ -354,10 +349,10 @@ def topu(body: ToPuIn):
 @app.get("/api/units/example")
 def units_example():
     """The textbook example (real units) that the input wizard starts from."""
-    ex = units.EXAMPLE
+    ex = topics.UNITS_EXAMPLE
     return to_json({"sbase": ex["sbase"], "ref_bus": ex["ref_bus"], "ref_kv": ex["ref_kv"],
                     "buses": ex["buses"], "lines": ex["lines"], "trafos": ex["trafos"],
-                    "z_units": list(units.Z_UNITS), "b_units": list(units.B_UNITS)})
+                    "z_units": list(topics.Z_UNITS), "b_units": list(topics.B_UNITS)})
 
 
 # --------------------------------------------------------------- AI write-up
@@ -369,7 +364,7 @@ class ReportIn(BaseModel):
 @app.get("/api/lm/models")
 def lm_models_ep():
     """Models loaded in LM Studio (empty when the server is not running)."""
-    import ai_report
+    import gridcore as ai_report
     return {"models": ai_report.lm_models(), "url": ai_report.LMSTUDIO_URL}
 
 
@@ -377,7 +372,7 @@ def lm_models_ep():
 def report(body: ReportIn):
     """Plain-English write-up of the solver's own summary by a local model;
     the model only rephrases the numbers it is given."""
-    import ai_report
+    import gridcore as ai_report
     import requests
     try:
         return {"text": ai_report.ai_report(body.summary, body.model)}

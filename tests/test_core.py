@@ -10,7 +10,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 import gridcore
-from cases import CASES
+from gridcore import CASES
 
 GOLDEN = pickle.loads((Path(__file__).parent / "data" / "core_golden.pkl").read_bytes())
 CFG = dict(method="Newton-Raphson", base=100.0, vmin=0.95, vmax=1.10,

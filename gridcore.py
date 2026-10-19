@@ -10,7 +10,7 @@ itself lives in solver.py, studies.py and qlimits.py.
 import numpy as np
 import pandas as pd
 
-from qlimits import solve_with_qlimits
+from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
 from studies import contingency, pv_curve
 from studies import outage as _outage
@@ -173,3 +173,85 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False):
 def outage(b, l, k):
     """Re-solve the case with line k removed: (res, flows, ok, hist)."""
     return _outage(b, l, k)
+
+# ============================================================================
+# Preset cases
+# ============================================================================
+
+# ------------------------------------------------------------------ cases
+def _bus(types, V, Pd, Qd, Pg=None, Bs=None):
+    n = len(types)
+    return pd.DataFrame({"Type": types, "V": V, "Pg": Pg or [0.0] * n, "Qg": [0.0] * n,
+                         "Pd": Pd, "Qd": Qd, "Bs": Bs or [0.0] * n})
+
+
+def _lines(rows):
+    r = pd.DataFrame(rows, columns=["From", "To", "R", "X", "B", "Tap"])
+    return r
+
+
+CASES = {
+    "5-bus (demo)": (
+        _bus(["Slack", "PV", "PQ", "PQ", "PQ"], [1.06, 1.04, 1, 1, 1],
+             [0, 0.2, 0.45, 0.4, 0.6], [0, 0.1, 0.15, 0.05, 0.1], Pg=[0, 0.4, 0, 0, 0]),
+        _lines([[1, 2, .02, .06, .06, 1], [1, 3, .08, .24, .05, 1], [2, 3, .06, .18, .04, 1],
+                [2, 4, .06, .18, .04, 1], [2, 5, .04, .12, .03, 1], [3, 4, .01, .03, .02, 1],
+                [4, 5, .08, .24, .05, 1]])),
+    "IEEE 14-bus": (
+        _bus(["Slack", "PV", "PV", "PQ", "PQ", "PV", "PQ", "PV", "PQ", "PQ", "PQ", "PQ", "PQ", "PQ"],
+             [1.06, 1.045, 1.01, 1, 1, 1.07, 1, 1.09, 1, 1, 1, 1, 1, 1],
+             [0, .217, .942, .478, .076, .112, 0, 0, .295, .09, .035, .061, .135, .149],
+             [0, .127, .19, -.039, .016, .075, 0, 0, .166, .058, .018, .016, .058, .05],
+             Pg=[0, .4] + [0] * 12, Bs=[0] * 8 + [0.19] + [0] * 5),
+        _lines([[1, 2, .01938, .05917, .0528, 1], [1, 5, .05403, .22304, .0492, 1],
+                [2, 3, .04699, .19797, .0438, 1], [2, 4, .05811, .17632, .034, 1],
+                [2, 5, .05695, .17388, .0346, 1], [3, 4, .06701, .17103, .0128, 1],
+                [4, 5, .01335, .04211, 0, 1], [4, 7, 0, .20912, 0, .978],
+                [4, 9, 0, .55618, 0, .969], [5, 6, 0, .25202, 0, .932],
+                [6, 11, .09498, .1989, 0, 1], [6, 12, .12291, .25581, 0, 1],
+                [6, 13, .06615, .13027, 0, 1], [7, 8, 0, .17615, 0, 1],
+                [7, 9, 0, .11001, 0, 1], [9, 10, .03181, .0845, 0, 1],
+                [9, 14, .12711, .27038, 0, 1], [10, 11, .08205, .19207, 0, 1],
+                [12, 13, .22092, .19988, 0, 1], [13, 14, .17093, .34802, 0, 1]])),
+}
+
+# One-line diagram coordinates per preset (diagram units, y grows downward):
+# hand-placed after the usual IEEE 14-bus drawing (generators on top, the
+# 6/9 transformer area in the middle, the 13.8 kV buses below) so every
+# branch is a straight drop or one elbow. Cases without an entry use the
+# automatic layered layout.
+COORDS = {
+    "IEEE 14-bus": [(2.5, 0), (9, 0), (16.5, 0), (13.5, 5), (5, 5),
+                    (1.5, 10), (12.5, 10), (7.2, 10), (19, 10), (20, 15),
+                    (4, 15), (-5.5, 10), (-2, 15), (-1.5, 20)],
+}
+
+
+# ============================================================================
+# Local model write-up (LM Studio)
+# ============================================================================
+
+LMSTUDIO_URL = "http://127.0.0.1:1234/v1"
+
+
+# ------------------------------------------------------- local AI (Gemma)
+def lm_models(url=LMSTUDIO_URL):
+    import requests
+    try:
+        data = requests.get(f"{url}/models", timeout=3).json()["data"]
+        return [m["id"] for m in data]
+    except Exception:
+        return []
+
+
+def ai_report(summary, model, url=LMSTUDIO_URL):
+    import requests
+    prompt = ("You are a power systems engineer. Write a short plain-English "
+              "load flow study summary: voltage problems, losses, and practical "
+              "suggestions. Use ONLY the numbers given, do not invent any.\n\n"
+              + summary)
+    r = requests.post(f"{url}/chat/completions", timeout=300, json={
+        "model": model, "temperature": 0.3, "max_tokens": 700,
+        "messages": [{"role": "user", "content": prompt}]})
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]

@@ -1,14 +1,13 @@
 """Real units -> per unit (units.py)."""
-import numpy as np
 import pandas as pd
 import pytest
+import topics
 
-import units
 
 
 def _example():
-    e = units.EXAMPLE
-    return units.to_pu(e["sbase"], e["ref_bus"], e["ref_kv"], e["buses"],
+    e = topics.UNITS_EXAMPLE
+    return topics.to_pu(e["sbase"], e["ref_bus"], e["ref_kv"], e["buses"],
                        e["lines"], e["trafos"])
 
 
@@ -36,8 +35,8 @@ def test_charging_mvar_and_loads():
 def test_transformer_rebased_to_system_base():
     tr = pd.DataFrame({"From": [1], "To": [2], "kV From": [11.0], "kV To": [132.0],
                        "MVA": [50.0], "R": [0.0], "X": [0.1], "Tap": [1.0]})
-    e = units.EXAMPLE
-    r = units.to_pu(100.0, 1, 11.0, e["buses"], e["lines"], tr)
+    e = topics.UNITS_EXAMPLE
+    r = topics.to_pu(100.0, 1, 11.0, e["buses"], e["lines"], tr)
     t = r["lines"].iloc[-1]
     assert t["X"] == pytest.approx(0.1 * 100 / 50)     # Z_new = Z_old * S_new/S_old
     assert t["Tap"] == pytest.approx(1.0)
@@ -47,13 +46,13 @@ def test_rated_voltage_mismatch_gives_off_nominal_tap():
     # base kV 11 on bus 1 but the transformer is rated 10.5/132 kV
     tr = pd.DataFrame({"From": [1], "To": [2], "kV From": [10.5], "kV To": [132.0],
                        "MVA": [100.0], "R": [0.0], "X": [0.1], "Tap": [1.0]})
-    e = units.EXAMPLE
-    r = units.to_pu(100.0, 2, 132.0, e["buses"], e["lines"], tr)
+    e = topics.UNITS_EXAMPLE
+    r = topics.to_pu(100.0, 2, 132.0, e["buses"], e["lines"], tr)
     assert r["kv"][0] == pytest.approx(10.5)            # zone follows the rating
     assert r["lines"].iloc[-1]["X"] == pytest.approx(0.1)
 
 
 def test_unreachable_bus_is_reported():
-    e = units.EXAMPLE
+    e = topics.UNITS_EXAMPLE
     with pytest.raises(ValueError, match="No base kV"):
-        units.to_pu(100.0, 1, 11.0, e["buses"], e["lines"], e["trafos"].iloc[:0])
+        topics.to_pu(100.0, 1, 11.0, e["buses"], e["lines"], e["trafos"].iloc[:0])

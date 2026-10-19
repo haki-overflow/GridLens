@@ -665,7 +665,7 @@ export async function openWizard(): Promise<void> {
       setState({
         case: { name: "Textbook case", bus: result.bus, lines: result.lines,
                 settings: { ...DEFAULT_SETTINGS, base: sys.sbase } },
-        results: null, solvedCase: null, solvedSig: null, selection: null, outage: null,
+        results: null, solvedCase: null, solvedSig: null, selection: null, outage: null, started: true,
         conversion: { zones: result.zones, table: result.table },
         fileName: "textbook_case.gridlens.json",
       });

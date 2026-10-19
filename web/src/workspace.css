@@ -83,7 +83,10 @@ button, input, select { font: inherit; color: inherit; }
 
 /* --- centre: document tabs over the output panel ---------------------------- */
 .ws-centre { display: grid; min-width: 0; min-height: 0; overflow: hidden;
-  grid-template-rows: 26px minmax(0, 1fr) 4px var(--out-h); }
+  grid-template-rows: auto auto minmax(0, 1fr) 4px var(--out-h); }
+.ws-centre > .tabs { grid-row: 1; height: 26px; } .ws-centre > .tabs[hidden], .ws-centre > .nexthint[hidden] { display: none; }
+.ws-centre > .nexthint { grid-row: 2; } .ws-centre > .docs { grid-row: 3; }
+.ws-centre > .ws-split-o { grid-row: 4; } .ws-centre > .output { grid-row: 5; }
 .tabs { display: flex; align-items: stretch; background: var(--side);
   border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden;
   scrollbar-width: thin; }
@@ -337,3 +340,20 @@ dialog.wizard::backdrop { background: rgba(0, 0, 0, .55); }
 .wz-review .sec { margin: 12px 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .07em; color: var(--muted); }
 pre.answer.wrap { white-space: pre-wrap; }
+
+/* ---- start screen and next-step hint ------------------------------------------ */
+.nexthint { display: flex; align-items: center; gap: 12px; padding: 4px 14px; font-size: 12px;
+  background: var(--panel); border-bottom: 1px solid var(--border); color: var(--text); }
+.nexthint .btn { padding: 1px 10px; }
+.start { position: absolute; inset: 0; z-index: 5; overflow: auto; padding: 28px 32px; background: var(--bg); }
+.start[hidden] { display: none; }
+.start h2 { margin: 0 0 6px; font-size: 20px; }
+.start-lead { margin: 0 0 22px; max-width: 640px; color: var(--muted); font-size: 13px; }
+.start-cards { display: flex; gap: 14px; flex-wrap: wrap; }
+.start-card { width: 230px; padding: 14px; background: var(--panel); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px; }
+.start-card h3 { margin: 0; font-size: 13px; }
+.start-card p { margin: 0 0 6px; color: var(--muted); font-size: 12px; flex: 1; }
+.start-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.start-foot { margin: 22px 0 8px; color: var(--muted); font-size: 12px; }
+.linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; text-decoration: underline; }

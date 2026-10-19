@@ -1,6 +1,6 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { exportProject, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State, type View } from "./app";
+import { VIEWS, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State, type View } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
 import { ICON, h } from "./ui";
@@ -16,6 +16,7 @@ export interface Shell {
   busy: HTMLElement;
   tree: HTMLElement;
   tabs: HTMLElement;
+  hint: HTMLElement;
   docs: HTMLElement;
   outTabs: HTMLElement;
   out: HTMLElement;
@@ -49,13 +50,15 @@ export function buildShell(app: HTMLElement): Shell {
   const centre = h("main", "ws-centre");
   const tabs = h("div", "tabs");
   tabs.setAttribute("role", "tablist");
+  const hint = h("div", "nexthint");
+  hint.hidden = true;
   const docs = h("div", "docs");
-  const splitO = h("div", "");
+  const splitO = h("div", "ws-split-o");
   const output = h("section", "output");
   const outTabs = h("div", "out-tabs");
   const out = h("div", "out-body");
   output.append(outTabs, out);
-  centre.append(tabs, docs, splitO, output);
+  centre.append(tabs, hint, docs, splitO, output);
 
   const status = h("footer", "ws-status");
   root.append(title, tools, busy, treeP, splitL, centre, splitR, propsP, status);
@@ -69,7 +72,7 @@ export function buildShell(app: HTMLElement): Shell {
     { el: splitO, cssVar: "--out-h", axis: "y", def: 240, min: 60,
       max: () => (window.innerHeight - 28 - 32 - 22) * 0.7, sign: -1 },
   ]);
-  return { root, readouts, tools, busy, tree, tabs, docs, outTabs, out, props, status };
+  return { root, readouts, tools, busy, tree, tabs, hint, docs, outTabs, out, props, status };
 }
 
 // ---- splitters ---------------------------------------------------------
@@ -331,7 +334,7 @@ export function mountToolbar(bar: HTMLElement): void {
       o.value = n;
       return o;
     }));
-    if (!getState().case && names[0]) void loadPreset(names[0]);
+    if (!getState().case && names[0]) void loadPreset(names[0], false);
     else if (getState().case && !names.includes(getState().case!.name)) {
       const o = h("option", "", getState().case!.name);
       o.value = getState().case!.name;
@@ -381,6 +384,97 @@ export function mountChrome(read: HTMLElement, status: HTMLElement, outTabs: HTM
       `<div class="file">${esc(s.fileName)}</div>`;
 
     paintProps(props, s);
+  };
+  subscribe(paint);
+  paint(getState());
+}
+
+// ---- start and hints ---------------------------------------------------
+
+/** First-run welcome: three ways to begin. Hidden once a case was chosen. */
+export function mountStart(host: HTMLElement): void {
+  const box = h("div", "start");
+  const file = h("input");
+  file.type = "file";
+  file.accept = ".json,.gridlens.json,application/json";
+  file.hidden = true;
+  const examples = h("div", "start-btns");
+  const card = (title: string, text: string, ...btns: HTMLElement[]) => {
+    const c = h("div", "start-card");
+    c.append(h("h3", "", title), h("p", "", text));
+    const row = h("div", "start-btns");
+    row.append(...btns);
+    c.append(row);
+    return c;
+  };
+  const btn = (label: string, primary = false) => h("button", `btn${primary ? " primary" : ""}`, label);
+  const wiz = btn("Open the form", true);
+  const pick = btn("Choose a file");
+  const skip = h("button", "linklike", "Skip: continue with the current example");
+  wiz.addEventListener("click", () => void openWizard());
+  pick.addEventListener("click", () => file.click());
+  file.addEventListener("change", async () => {
+    const f = file.files?.[0];
+    file.value = "";
+    if (f) await importProject(f).catch((e) => report(e, `Opening ${f.name}`));
+  });
+  skip.addEventListener("click", () => setState({ started: true }));
+  presets().then((names) => {
+    examples.replaceChildren(...names.map((n) => {
+      const b = btn(n, true);
+      b.addEventListener("click", () => void loadPreset(n));
+      return b;
+    }));
+  }).catch((e) => report(e, "Listing examples"));
+  box.append(
+    h("h2", "", "Welcome to GridLens"),
+    h("p", "start-lead", "Solve a power system, check that it is safe, find fault currents, and see the working step by step."),
+    (() => {
+      const row = h("div", "start-cards");
+      row.append(card("Use an example", "Start from a ready-made network.", examples),
+        card("Enter textbook data", "Type a question's data in MVA, kV and ohms.", wiz),
+        card("Open a file", "Load a saved .gridlens.json project.", pick, file));
+      return row;
+    })(),
+    h("p", "start-foot", "Then press Run (F5) and follow the steps on the left."), skip);
+  host.append(box);
+  const paint = (s: State) => { box.hidden = s.started; };
+  subscribe(paint);
+  paint(getState());
+}
+
+const NEXT: Record<string, [string, string]> = {
+  network: ["Solved. Next: look at the results.", "solve"],
+  solve: ["Next: check what happens if a line fails.", "safety"],
+  safety: ["Next: short-circuit currents.", "faults"],
+  faults: ["Next: see the maths step by step.", "working"],
+  working: ["Finished? Download the results from Solve > Report and download.", "solve"],
+};
+
+/** One line under the sub-tabs that says what to do next. */
+export function mountHint(el: HTMLElement): void {
+  const paint = (s: State) => {
+    const view = viewOf(s.activeDoc)?.view.id ?? "";
+    let text = "", label = "", act: () => void = () => {};
+    if (!s.started || !s.case) {
+      el.hidden = true;
+      return;
+    }
+    if (!s.results) {
+      [text, label, act] = ["Press Run (F5) to solve the case.", "Run", () => void run()];
+    } else if (isStale(s)) {
+      [text, label, act] = ["The case changed. Press Run (F5) to update the results.", "Run", () => void run()];
+    } else if (NEXT[view]) {
+      const [t, v] = NEXT[view]!;
+      [text, label, act] = [t, `Go to ${VIEWS.find((x) => x.id === v)?.label}`, () => navigateView(v)];
+    } else {
+      el.hidden = true;
+      return;
+    }
+    const b = h("button", "btn", label);
+    b.addEventListener("click", act);
+    el.replaceChildren(h("span", "", text), b);
+    el.hidden = false;
   };
   subscribe(paint);
   paint(getState());

@@ -177,6 +177,7 @@ export interface State {
   solvedCase: CaseData | null; // the case the results belong to
   solvedSig: string | null;
   selection: Selection | null;
+  started: boolean; // false until the user picks an example, a file or textbook data
   conversion: { zones: Rec[]; table: Rec[] } | null; // textbook per-unit check, for the worked answer
   outage: number | null; // index of the line shown tripped on the diagram
   openDocs: string[];
@@ -193,7 +194,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const KEY = "gridlens.project";
 const fresh = (): State => ({
-  case: null, results: null, solvedCase: null, solvedSig: null, selection: null, outage: null, conversion: null,
+  case: null, results: null, solvedCase: null, solvedSig: null, selection: null, started: false, outage: null, conversion: null,
   openDocs: ["canvas"], activeDoc: "canvas",
   view: { grid: true, flows: false, angles: false }, messages: [],
   fileName: "untitled.gridlens.json",
@@ -276,7 +277,7 @@ export async function importProject(file: File): Promise<void> {
   setState({
     case: { name: c.name ?? file.name, bus: c.bus, lines: c.lines,
             settings: { ...DEFAULT_SETTINGS, ...(c.settings ?? {}) } },
-    view: { ...state.view, ...(data.view ?? {}) }, selection: null, fileName: file.name,
+    view: { ...state.view, ...(data.view ?? {}) }, selection: null, fileName: file.name, started: true,
   });
   log("info", `Imported ${file.name}: ${c.bus.length} buses, ${c.lines.length} branches. Press Run.`);
 }
@@ -291,7 +292,7 @@ export async function presets(): Promise<string[]> {
   return (await get<{ cases: string[] }>("/api/cases")).cases;
 }
 
-export async function loadPreset(name: string): Promise<void> {
+export async function loadPreset(name: string, chosen = true): Promise<void> {
   try {
     const c = await get<CaseOut>(`/api/case/${encodeURIComponent(name)}`);
     const prev = getState().case;
@@ -299,6 +300,7 @@ export async function loadPreset(name: string): Promise<void> {
       case: { name: c.name, bus: c.bus, lines: c.lines,
               settings: prev?.settings ?? { ...DEFAULT_SETTINGS } },
       selection: null, fileName: `${c.name.replace(/[^\w-]+/g, "_")}.gridlens.json`,
+      ...(chosen ? { started: true } : {}),
     });
     log("info", `Loaded preset ${c.name}: ${c.bus.length} buses, ${c.lines.length} branches.`);
   } catch (e) {

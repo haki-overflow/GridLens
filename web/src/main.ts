@@ -6,7 +6,7 @@ import "./canvas";
 import { currentDoc, getState, mountBusy, onRoute, setState } from "./app";
 import { lookupDoc } from "./documents";
 import { mountNav } from "./panels";
-import { DocTabs, buildShell, mountChrome, mountToolbar } from "./shell";
+import { DocTabs, buildShell, mountChrome, mountHint, mountStart, mountToolbar } from "./shell";
 
 // ---- main --------------------------------------------------------------
 
@@ -15,6 +15,8 @@ mountBusy(shell.busy);
 mountChrome(shell.readouts, shell.status, shell.outTabs, shell.out, shell.props);
 mountToolbar(shell.tools);
 mountNav(shell.tree);
+mountHint(shell.hint);
+mountStart(shell.docs);
 
 const tabs = new DocTabs(shell.tabs, shell.docs, lookupDoc,
   (open, active) => setState({ openDocs: open, activeDoc: active }));

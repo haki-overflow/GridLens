@@ -41,7 +41,7 @@ export function buildShell(app: HTMLElement): Shell {
   tools.setAttribute("aria-label", "Toolbar");
   const busy = h("div", "ws-busy");
   busy.setAttribute("aria-hidden", "true");
-  const [treeP, tree] = panel("ws-tree", "Project");
+  const [treeP, tree] = panel("ws-tree", "Workflow");
   const splitL = h("div", "ws-split-l");
   const splitR = h("div", "ws-split-r");
   const [propsP, props] = panel("ws-props", "Properties");
@@ -62,7 +62,7 @@ export function buildShell(app: HTMLElement): Shell {
   app.replaceChildren(root);
 
   initSplitters(root, [
-    { el: splitL, cssVar: "--tree-w", axis: "x", def: 220, min: 140,
+    { el: splitL, cssVar: "--tree-w", axis: "x", def: 250, min: 200,
       max: () => Math.min(460, window.innerWidth * 0.35), sign: 1 },
     { el: splitR, cssVar: "--props-w", axis: "x", def: 280, min: 180,
       max: () => Math.min(520, window.innerWidth * 0.4), sign: -1 },

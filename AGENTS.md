@@ -21,7 +21,8 @@ Built for Hacktoberfest, so everything must use open-weight models and open-sour
 cases.py       _bus, _lines, CASES (5-bus demo, IEEE 14-bus)
 solver.py      METHODS, build_ybus, injections, newton_raphson, fast_decoupled,
                gauss_seidel, solve_loadflow
-studies.py     contingency (N-1), fault_analysis (3-phase, Zbus)
+studies.py     contingency (N-1), outage (one line out), pv_curve (load
+               scaling to the nose), fault_analysis (3-phase, Zbus)
 plotting.py    draw_network and other matplotlib figures
 ui_theme.py    control-room palette, CSS injection (banner, badges, metric
                cards), mpl_dark matplotlib style
@@ -66,7 +67,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 ## UI (app.py + ui_theme.py)
 - Sidebar **Mode**: Quick (case source + study checkboxes only), Standard (adds method, base MVA, voltage limits), Advanced (adds tap/shunt column toggles, solver tolerance). Untouched fields use defaults.
 - `Tap` and `Bs` columns appear only when their Advanced toggles are on; `_prep` in `app.py` fills `Tap = 1`, `Bs = 0` and missing `B` before calling the solver, and warns when hidden non-default data exists.
-- Study checkboxes (N-1, method comparison, short circuit, AI report) gate both computation and tabs: only ticked studies run; short-circuit fields and the LM Studio picker live inside their own tabs.
+- Study checkboxes (N-1, method comparison, voltage stability, short circuit, AI report) gate both computation and tabs: only ticked studies run; short-circuit fields and the LM Studio picker live inside their own tabs.
 - Validation happens in `_prep` (app.py owns it): friendly messages for slack count, lines to missing buses, `X = 0`, disconnected networks, non-numeric cells. Fix validation bugs there, not in `solver.py`.
 - Everything lives in `st.session_state` under stable keys; table editor keys carry a version counter so preset/upload/column-toggle switches rebuild cleanly.
 - Theme code (CSS injection, banner SVG, badge helper, `mpl_dark`) lives in `ui_theme.py`; `.streamlit/config.toml` carries the base dark theme. Keep app.py free of styling.

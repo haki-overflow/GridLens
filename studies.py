@@ -40,3 +40,37 @@ def fault_analysis(bus, lines, res, xd, zf, base, kv):
     df = pd.DataFrame({"Bus": np.arange(1, n + 1), "Fault I (pu)": abs(If),
                        "Fault I (kA)": abs(If) * ib, "Fault MVA": abs(If) * base})
     return df, Z, V0, If
+
+
+def outage(bus, lines, k):
+    """Re-solve the case with line k removed (Newton-Raphson)."""
+    return solve_loadflow(bus, lines.drop(lines.index[k]).reset_index(drop=True))
+
+
+def pv_curve(bus, lines, step=0.1, lmax=6.0):
+    """P-V curve: scale every load and generator by lambda until NR fails.
+
+    The step halves on each failure (3 times), so the last converged lambda
+    is a lower bound on the nose (maximum loadability) of the case.
+    Returns (DataFrame with 'lambda' + one |V| column per bus, last lambda).
+    """
+    rows, lam, h = [], 0.0, step
+    while h >= step / 8 and lam + h <= lmax:
+        trial = round(lam + h, 6) if rows else 0.0
+        b = bus.copy()
+        b[["Pg", "Qg", "Pd", "Qd"]] = b[["Pg", "Qg", "Pd", "Qd"]] * trial
+        try:
+            r, _, ok, _ = solve_loadflow(b, lines)
+            v = r["V (pu)"].to_numpy(dtype=float)
+            ok = ok and np.isfinite(v).all() and v.min() > 0.3
+        except Exception:
+            ok = False
+        if ok:
+            rows.append([trial, *v])
+            lam = trial
+        elif not rows:
+            break
+        else:
+            h /= 2
+    cols = ["lambda"] + [f"Bus {i}" for i in range(1, len(bus) + 1)]
+    return pd.DataFrame(rows, columns=cols), lam

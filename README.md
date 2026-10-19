@@ -10,6 +10,8 @@ A Python tool that solves an N-bus power system and turns the results into somet
 - Three-phase fault analysis at every bus via the Zbus matrix.
 - Network diagram coloured by bus voltage, plus voltage-profile and post-fault charts.
 - Method comparison table (convergence, iterations, loss, minimum voltage).
+- **Voltage stability (P-V curves)**: every load and generator is scaled by λ until the load flow stops solving; reports the loadability margin, the weakest bus and the first λ that breaks Vmin.
+- **Contingency explorer**: pick any line outage, see the network redrawn with that line tripped, post-outage voltages, and the MW flow redistribution on every remaining line.
 - Optional report written by a local Gemma model via LM Studio, given only the solver's numbers.
 - Three sidebar modes (Quick, Standard, Advanced) so nobody has to fill every field; untouched settings fall back to defaults.
 - Grid data loads three ways: preset case, uploaded bus/line CSV pair (blank templates included), or direct table edits.
@@ -26,7 +28,7 @@ CAPSA/
 ├── ui_theme.py            control-room palette, CSS injection (banner/badges/cards), matplotlib style
 ├── solver.py              METHODS, build_ybus, injections, the three solvers, solve_loadflow
 ├── cases.py               _bus/_lines helpers and the CASES presets
-├── studies.py             contingency (N-1) and fault_analysis (3-phase via Zbus)
+├── studies.py             contingency (N-1), outage, pv_curve, fault_analysis (3-phase via Zbus)
 ├── plotting.py            draw_network plus voltage-profile / convergence / post-fault figures
 ├── ai_report.py           LMSTUDIO_URL, lm_models, ai_report (local Gemma via LM Studio)
 ├── check_refactor.py      asserts the split modules match power_flow_methods.py exactly

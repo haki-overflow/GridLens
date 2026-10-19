@@ -5,3 +5,6 @@ plotly
 streamlit
 requests
 pytest
+fastapi
+httpx
+uvicorn

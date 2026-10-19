@@ -13,7 +13,7 @@ Built for Hacktoberfest, so everything must use open-weight models and open-sour
 - All quantities are **per unit**. Base MVA is a setting. Line `B` = total line charging susceptance (split B/2 at each end).
 - Do NOT change solver logic unless explicitly asked. Refactors are move-only; verify with a comparison script that old and new outputs match exactly.
 - Keep code short and readable. Small functions, one job per module, easy to debug.
-- Use only: numpy, pandas, matplotlib, plotly, streamlit, requests, pytest. Ask before adding a dependency.
+- Use only: numpy, pandas, matplotlib, plotly, streamlit, requests, pytest, fastapi, httpx, uvicorn. Ask before adding a dependency.
 - Fix bugs in the module that owns them. Do not patch around them in callers.
 
 ## Layout (target)
@@ -25,6 +25,8 @@ studies.py     contingency (N-1), outage (one line out), pv_curve (load
                scaling to the nose), fault_analysis (3-phase, Zbus)
 gridcore.py    prep_case (validation), run_study, outage: no Streamlit; used by
                app.py and the API
+api/           FastAPI server (server.py endpoints, schema.py JSON helpers);
+               run_api.sh, docs at http://localhost:8000/docs
 plotting.py    matplotlib figures (voltage profile, convergence, P-V, faults)
 oneline.py     interactive single-line diagram (Plotly): layout, routing, hover
 theme.css      all colours/sizes as CSS variables (single KiCad-style dark theme)

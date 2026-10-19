@@ -1,0 +1,361 @@
+"""GridLens API: JSON in, JSON out. Run: ./run_api.sh (docs at /docs).
+
+A "case" is {"bus": [records], "lines": [records], "settings": {...}}
+with the same columns as the app's bus / line tables (per unit). Every
+endpoint that takes a case validates it with gridcore.prep_case first and
+answers 422 {"problems": [...], "notes": [...]} when the data is wrong.
+Any other failure is also a 422 with a one-line problem, never a stack
+trace. All maths is done by the existing modules; this file only moves
+data in and out.
+"""
+from pathlib import Path
+from typing import Any, Optional
+
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+import dispatch as D
+import gridcore
+import oneline
+import seqfaults as SF
+import symcomp as SC
+import tline as TL
+import units
+import working as W
+from cases import CASES, COORDS
+from qlimits import solve_with_qlimits
+from solver import build_ybus, solve_loadflow
+from studies import fault_analysis
+
+from .schema import complex_in, frame, to_json
+
+DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+app = FastAPI(title="GridLens API", version="1.3",
+              description="Load flow, N-1, faults and textbook tools as JSON.")
+
+
+# ------------------------------------------------------------------ models
+class Settings(BaseModel):
+    method: str = "Newton-Raphson"
+    tol: float = 1e-8
+    base: float = 100.0
+    vmin: float = 0.95
+    vmax: float = 1.10
+    qlim: bool = False
+    taps: bool = False
+    shunts: bool = False
+
+
+class Case(BaseModel):
+    bus: list[dict[str, Any]]
+    lines: list[dict[str, Any]]
+    settings: Settings = Field(default_factory=Settings)
+    name: Optional[str] = Field(None, description="Preset name; selects the "
+                                "hand-placed diagram coordinates in /api/layout.")
+
+
+class FaultIn(BaseModel):
+    case: Case
+    xd: float = 0.2
+    zf: float = 0.0
+    kv: float = 33.0
+
+
+class SeqFaultIn(BaseModel):
+    case: Case
+    kind: str = "SLG"
+    bus: int = 1
+    zf: Any = 0.0
+    prefault: str = Field("flat", description='"flat" (1∠0°) or "loadflow"')
+    gens: Optional[list[dict[str, Any]]] = None
+    branches: Optional[list[dict[str, Any]]] = None
+    kv: Optional[list[float]] = None
+
+
+class IterIn(BaseModel):
+    case: Case
+    method: Optional[str] = None
+    tol: Optional[float] = None
+    alpha: float = 1.0
+
+
+class AnswerIn(BaseModel):
+    case: Case
+    show: int = 2
+    conversion: Optional[dict[str, list[dict[str, Any]]]] = None
+
+
+class DispatchIn(BaseModel):
+    units: list[dict[str, Any]]
+    PD: float
+    B: Optional[list[list[float]]] = None
+    B0: Optional[list[float]] = None
+    B00: float = 0.0
+    pu_base: Optional[float] = Field(None, description="If set, B, B0, B00 "
+                                     "are per unit on this MVA base.")
+    use_limits: bool = True
+    tol: float = 1e-6
+
+
+class SymIn(BaseModel):
+    abc: Optional[list[Any]] = None
+    s012: Optional[list[Any]] = None
+
+
+class TLineIn(BaseModel):
+    model: str = "medium (π)"
+    R: float = 0.1
+    X: float = 0.5
+    B_uS: float = 3.2
+    length: float = 150.0
+    VR_kV: float = 220.0
+    PR_MW: float = 150.0
+    pf: float = 0.85
+    lagging: bool = True
+
+
+class ToPuIn(BaseModel):
+    sbase: float
+    ref_bus: int
+    ref_kv: float
+    buses: list[dict[str, Any]]
+    lines: list[dict[str, Any]] = []
+    trafos: list[dict[str, Any]] = []
+
+
+# ---------------------------------------------------------- error handling
+class Problems(Exception):
+    def __init__(self, problems, notes=()):
+        self.problems, self.notes = list(problems), list(notes)
+
+
+@app.exception_handler(Problems)
+async def _problems(_, e: Problems):
+    return JSONResponse(status_code=422,
+                        content={"problems": e.problems, "notes": e.notes})
+
+
+@app.exception_handler(RequestValidationError)
+async def _bad_request(_, e: RequestValidationError):
+    return JSONResponse(status_code=422, content={"problems": [
+        f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()]})
+
+
+def _guard(fn, what):
+    """Run fn(); any error becomes a 422 problem instead of a traceback."""
+    try:
+        return fn()
+    except Problems:
+        raise
+    except Exception as e:
+        raise Problems([f"{what} failed: {e}"]) from None
+
+
+# ----------------------------------------------------------------- helpers
+def _cfg(case):
+    return case.settings.model_dump()
+
+
+def _prep(case):
+    """Validated per-unit tables; 422 on problems."""
+    b, l, probs, notes = _guard(lambda: gridcore.prep_case(
+        frame(case.bus), frame(case.lines), _cfg(case)), "Validation")
+    if probs:
+        raise Problems(probs, notes)
+    return b, l, notes
+
+
+def _loadflow(case):
+    """Main load flow as run_study does it (Q limits when on): b, l, res,
+    flows, ok, hist, b_lf (bus types after Q-limit switching), qlog."""
+    b, l, _ = _prep(case)
+    s = case.settings
+
+    def run():
+        if s.qlim:
+            res, flows, ok, hist, b_lf, qlog = solve_with_qlimits(b, l, s.method, s.tol)
+        else:
+            (res, flows, ok, hist), b_lf, qlog = solve_loadflow(b, l, s.method, s.tol), b, []
+        return b, l, res, flows, ok, hist, b_lf, qlog
+    return _guard(run, "Load flow")
+
+
+# --------------------------------------------------------------- endpoints
+@app.get("/api/cases")
+def cases():
+    return {"cases": list(CASES)}
+
+
+@app.get("/api/case/{name}")
+def case(name: str):
+    if name not in CASES:
+        return JSONResponse(status_code=404, content={
+            "problems": [f"No preset called {name!r}."], "cases": list(CASES)})
+    bus, lines = CASES[name]
+    return {"name": name, "bus": to_json(bus), "lines": to_json(lines),
+            "settings": Settings().model_dump()}
+
+
+@app.post("/api/validate")
+def validate(case: Case):
+    b, l, probs, notes = _guard(lambda: gridcore.prep_case(
+        frame(case.bus), frame(case.lines), _cfg(case)), "Validation")
+    return {"problems": probs, "notes": notes}
+
+
+@app.post("/api/study")
+def study(case: Case):
+    b, l, notes = _prep(case)
+    s = case.settings
+    out = _guard(lambda: gridcore.run_study(b, l, s.method, s.tol, s.base,
+                                            s.vmin, s.vmax, s.qlim), "Study")
+    pv, lam = out.pop("pv")
+    return {**to_json(out), "pv": {"curve": to_json(pv), "lambda_max": lam},
+            "notes": notes}
+
+
+@app.post("/api/layout")
+def layout(case: Case):
+    b, l, _ = _prep(case)
+    edges = [(int(f) - 1, int(t) - 1) for f, t in zip(l["From"], l["To"])]
+    g = _guard(lambda: oneline.layout(len(b), edges, b, COORDS.get(case.name)),
+               "Layout")
+    return to_json(g)
+
+
+@app.post("/api/outage/{k}")
+def outage(k: int, case: Case):
+    b, l, _ = _prep(case)
+    if not 0 <= k < len(l):
+        raise Problems([f"Line index k must be 0 to {len(l) - 1} (row order)."])
+    res, flows, ok, hist = _guard(lambda: gridcore.outage(b, l, k), "Outage")
+    return {"line": f"{int(l['From'][k])}-{int(l['To'][k])}", "res": to_json(res),
+            "flows": to_json(flows), "ok": bool(ok), "hist": to_json(hist)}
+
+
+@app.post("/api/fault")
+def fault(body: FaultIn):
+    b, l, res, *_ = _loadflow(body.case)
+    tbl, Z, V0, If = _guard(lambda: fault_analysis(
+        b, l, res, body.xd, body.zf, body.case.settings.base, body.kv), "Fault analysis")
+    return {"table": to_json(tbl), "Z": to_json(Z), "V0": to_json(V0),
+            "If": to_json(If)}
+
+
+@app.post("/api/seqfault")
+def seqfault(body: SeqFaultIn):
+    b, l, res, *_ = _loadflow(body.case)
+    n = len(b)
+    g0, b0 = SF.seed_tables(b, l)
+    gens = frame(body.gens) if body.gens is not None else g0
+    br = frame(body.branches) if body.branches is not None else b0
+    kv = np.asarray(body.kv, float) if body.kv is not None else (
+        b["kV"].astype(float).to_numpy() if "kV" in b else np.full(n, 33.0))
+    vf = np.ones(n, complex) if body.prefault == "flat" else \
+        res["V (pu)"].to_numpy() * np.exp(1j * np.radians(res["Angle (deg)"].to_numpy()))
+    zf, base = complex_in(body.zf), body.case.settings.base
+
+    def run():
+        r = SF.solve_fault(body.kind, body.bus, gens, br, vf, zf, base, kv)
+        return r, SF.fault_table(body.kind, gens, br, vf, zf, base, kv)
+    r, tab = _guard(run, "Sequence fault")
+    return {**to_json(r), "table": to_json(tab), "gens": to_json(gens),
+            "branches": to_json(br), "kv": to_json(kv)}
+
+
+@app.post("/api/ybus")
+def ybus(case: Case):
+    _, l, _, _, _, _, b_lf, _ = _loadflow(case)
+    parts = _guard(lambda: W.ybus_parts(b_lf, l), "Ybus")
+    return {"parts": to_json(parts), "Y": to_json(build_ybus(len(b_lf), l, b_lf))}
+
+
+@app.post("/api/iterations")
+def iterations(body: IterIn):
+    _, l, _, _, _, _, b_lf, _ = _loadflow(body.case)
+    method = body.method or body.case.settings.method
+    tol = body.tol or (1e-6 if method == "Gauss-Seidel" else 1e-8)
+
+    def run():
+        if method == "Gauss-Seidel":
+            return W.gauss_seidel_trace(b_lf, l, body.alpha, tol, 2000)
+        if method == "Fast Decoupled":
+            return W.fast_decoupled_trace(b_lf, l, tol)
+        if method == "Newton-Raphson":
+            return W.newton_trace(b_lf, l, tol)
+        raise ValueError(f"unknown method {method!r}")
+    return {"method": method, "tol": tol, "trace": to_json(_guard(run, "Trace"))}
+
+
+@app.post("/api/answer")
+def answer(body: AnswerIn):
+    _, l, res, flows, _, _, b_lf, _ = _loadflow(body.case)
+    s = body.case.settings
+    conv = None if body.conversion is None else \
+        {k: frame(v) for k, v in body.conversion.items()}
+    text = _guard(lambda: W.answer_text(
+        b_lf, l, res, flows, s.base, s.method,
+        W.trace_lines(s.method, b_lf, l, tol=s.tol, show=body.show),
+        conversion=conv), "Answer")
+    return {"text": text}
+
+
+@app.post("/api/dispatch")
+def dispatch(body: DispatchIn):
+    def run():
+        B, B0, B00 = body.B, body.B0, body.B00
+        if body.pu_base and B is not None:
+            B, B0, B00 = D.b_from_pu(B, B0 if B0 is not None else [0.0] * len(B),
+                                     B00, body.pu_base)
+        return D.dispatch(frame(body.units), body.PD, B, B0, B00,
+                          use_limits=body.use_limits, tol=body.tol)
+    return to_json(_guard(run, "Dispatch"))
+
+
+@app.post("/api/symcomp")
+def symcomp(body: SymIn):
+    if body.abc is None and body.s012 is None:
+        raise Problems(['Give "abc" (phase -> sequence) or "s012" '
+                        "(sequence -> phase), three phasors each."])
+    out = {}
+    if body.abc is not None:
+        out["s012"] = to_json(_guard(lambda: SC.to_sequence(
+            [complex_in(v) for v in body.abc]), "to_sequence"))
+    if body.s012 is not None:
+        out["abc"] = to_json(_guard(lambda: SC.to_phase(
+            [complex_in(v) for v in body.s012]), "to_phase"))
+    return out
+
+
+@app.post("/api/tline")
+def tline(body: TLineIn):
+    p = body.model_dump()
+
+    def run():
+        A, B, C, Dd = TL.abcd(p["model"], p["R"], p["X"], p["B_uS"], p["length"])
+        return dict(abcd=dict(A=A, B=B, C=C, D=Dd), performance=TL.performance(**p))
+    return to_json(_guard(run, "Line calculation"))
+
+
+@app.post("/api/topu")
+def topu(body: ToPuIn):
+    r = _guard(lambda: units.to_pu(body.sbase, body.ref_bus, body.ref_kv,
+                                   frame(body.buses), frame(body.lines),
+                                   frame(body.trafos)), "Per-unit conversion")
+    return to_json(r)
+
+
+# ------------------------------------------------------------ static web app
+if DIST.is_dir():
+    app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
+else:
+    @app.get("/")
+    def root():
+        return {"note": "GridLens API. The web app is not built yet "
+                        "(web/dist is missing). See /docs for the endpoints."}

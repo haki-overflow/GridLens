@@ -193,3 +193,7 @@ One main result per screen; detail sits behind tabs or pop-ups.
 - Unsymmetrical faults: sequence data in a pop-up ("Edit sequence data", then Apply); results in Fault levels / Fault currents / Bus voltages / Branch currents tabs.
 - Worked answer: slider and download in one row; Bus results / Line flows / Full written answer tabs.
 - Problem input: the conversion checks (zone bases, per-unit table, solver case) are tabs under the input tables.
+
+## JSON API (FastAPI)
+
+`./run_api.sh` starts `uvicorn api.server:app` on port 8000; interactive docs at http://localhost:8000/docs. A case is `{"bus": [...], "lines": [...], "settings": {...}}` (same per-unit columns as the app tables; `GET /api/case/{name}` returns a preset in this form). Endpoints: `/api/cases`, `/api/case/{name}`, `/api/validate`, `/api/study`, `/api/layout`, `/api/outage/{k}` (k = 0-based line row), `/api/fault`, `/api/seqfault`, `/api/ybus`, `/api/iterations`, `/api/answer`, `/api/dispatch`, `/api/symcomp`, `/api/tline`, `/api/topu`. Bad data returns 422 `{"problems": [...]}`. Complex values are `{"re", "im", "polar"}`; NaN is `null`; floats are unrounded.

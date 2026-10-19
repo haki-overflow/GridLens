@@ -1,23 +1,26 @@
 import "./tokens.css";
 import "./workspace.css";
+import "./views";
+import "./canvas";
 import { mountBusy } from "./busy";
-import { lookupDoc } from "./docs";
-import { onRoute } from "./router";
-import { buildShell, h } from "./shell";
+import { mountChrome } from "./chrome";
+import { DOC_TITLES, lookupDoc } from "./docs";
+import { currentDoc, onRoute } from "./router";
+import { buildShell } from "./shell";
+import { getState, setState } from "./state";
 import { DocTabs } from "./tabs";
+import { mountToolbar } from "./toolbar";
 
 const shell = buildShell(document.getElementById("app")!);
 mountBusy(shell.busy);
+mountChrome(shell.readouts, shell.status, shell.outTabs, shell.out, shell.props);
+mountToolbar(shell.tools);
 
-shell.readouts.innerHTML =
-  "<div><span>Case</span>-</div><div><span>Buses / Branches</span>- / -</div>" +
-  "<div><span>Base</span>-</div><div><span>Limits</span>-</div><div><span>Solution</span>-</div>";
-shell.status.innerHTML =
-  "<div><b>Solver</b>-</div><div><b>Iterations</b>-</div><div><b>Tolerance</b>-</div>" +
-  "<div class='fill'><b>Status</b>Ready</div><div class='file'>untitled.gridlens.json</div>";
-const msgTab = h("div", "tab active", "Messages");
-shell.outTabs.append(msgTab);
-shell.props.append(h("div", "empty", "Nothing selected."));
+const tabs = new DocTabs(shell.tabs, shell.docs, lookupDoc,
+  (open, active) => setState({ openDocs: open, activeDoc: active }));
 
-const tabs = new DocTabs(shell.tabs, shell.docs, lookupDoc);
-onRoute("canvas", (id) => tabs.show(id));
+// reopen the documents of the last session, then follow the URL
+const s = getState();
+const start = currentDoc(s.activeDoc || "canvas");
+for (const id of s.openDocs) if (id in DOC_TITLES && id !== start) tabs.show(id);
+onRoute(start, (id) => tabs.show(id));

@@ -352,10 +352,17 @@ def topu(body: ToPuIn):
 
 
 # ------------------------------------------------------------ static web app
-if DIST.is_dir():
-    app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
-else:
-    @app.get("/", include_in_schema=False)
-    def root():
-        """No web build yet (web/dist missing): send visitors to the docs."""
-        return RedirectResponse("/docs")
+class _Web(StaticFiles):
+    """web/dist (the workspace built by `npm run build`) at "/". Checked on
+    every request, so a build made while the server runs is picked up;
+    until it exists "/" redirects to the API docs."""
+
+    async def get_response(self, path, scope):
+        if not (DIST / "index.html").is_file():
+            return RedirectResponse("/docs")
+        self.directory = DIST
+        self.all_directories = [DIST]
+        return await super().get_response(path, scope)
+
+
+app.mount("/", _Web(directory=DIST, html=True, check_dir=False), name="web")

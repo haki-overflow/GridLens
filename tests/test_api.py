@@ -185,6 +185,17 @@ def test_topu():
     assert post("/api/topu", body) == to_json(ref)
 
 
-def test_root_redirects_to_docs_without_web_build():
+def test_root_redirects_to_docs_without_web_build(tmp_path, monkeypatch):
+    import api.server as srv
+    monkeypatch.setattr(srv, "DIST", tmp_path / "missing")
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 307 and r.headers["location"] == "/docs"
+
+
+def test_root_serves_web_build(tmp_path, monkeypatch):
+    import api.server as srv
+    (tmp_path / "index.html").write_text("<!doctype html><title>GridLens</title>")
+    monkeypatch.setattr(srv, "DIST", tmp_path)
+    r = client.get("/")
+    assert r.status_code == 200 and "GridLens" in r.text
+    assert client.get("/api/cases").status_code == 200   # API still wins

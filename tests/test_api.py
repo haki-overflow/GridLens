@@ -185,6 +185,6 @@ def test_topu():
     assert post("/api/topu", body) == to_json(ref)
 
 
-def test_root_note_without_web_build():
-    r = client.get("/")
-    assert r.status_code == 200
+def test_root_redirects_to_docs_without_web_build():
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == "/docs"

@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -355,7 +355,7 @@ def topu(body: ToPuIn):
 if DIST.is_dir():
     app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
 else:
-    @app.get("/")
+    @app.get("/", include_in_schema=False)
     def root():
-        return {"note": "GridLens API. The web app is not built yet "
-                        "(web/dist is missing). See /docs for the endpoints."}
+        """No web build yet (web/dist missing): send visitors to the docs."""
+        return RedirectResponse("/docs")

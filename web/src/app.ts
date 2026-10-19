@@ -66,24 +66,88 @@ export async function busy<T>(work: Promise<T>): Promise<T> {
 
 // ---- router ------------------------------------------------------------
 
-// Hash routing: #/doc/<id> opens (or focuses) that document tab.
-export function docHref(id: string): string {
-  return `#/doc/${id}`;
+// The 14 documents are grouped into 6 views, each with sub-tabs. Routes are
+// #/<view>/<sub> (for example #/safety/n1); the older #/doc/<id> still works.
+export interface SubView { id: string; label: string; doc: string }
+export interface ViewDef {
+  id: string; label: string; hint: string;
+  needsRun: boolean; // results views stay "locked" until the first Run
+  subs: SubView[];
 }
 
+export const VIEWS: ViewDef[] = [
+  { id: "network", label: "Network", hint: "Draw and edit your grid", needsRun: false,
+    subs: [{ id: "diagram", label: "Diagram", doc: "canvas" }] },
+  { id: "solve", label: "Solve", hint: "Run the load flow", needsRun: true,
+    subs: [{ id: "results", label: "Results", doc: "load-flow" },
+      { id: "methods", label: "Do the 3 methods agree?", doc: "solver-check" },
+      { id: "report", label: "Report and download", doc: "report" }] },
+  { id: "safety", label: "Safety check", hint: "Is the grid within limits?", needsRun: true,
+    subs: [{ id: "n1", label: "If a line fails (N-1)", doc: "contingency" },
+      { id: "pv", label: "How much more load? (PV curve)", doc: "pv-analysis" }] },
+  { id: "faults", label: "Short circuit", hint: "Fault currents", needsRun: true,
+    subs: [{ id: "quick", label: "Quick (3-phase)", doc: "fault-levels" },
+      { id: "detailed", label: "Detailed (SLG, LL, DLG)", doc: "faults" }] },
+  { id: "working", label: "Show working", hint: "The maths, step by step", needsRun: true,
+    subs: [{ id: "ybus", label: "Admittance matrix (Ybus)", doc: "ybus" },
+      { id: "iterations", label: "Iterations", doc: "iterations" },
+      { id: "answer", label: "Worked answer", doc: "answer" }] },
+  { id: "tools", label: "Tools", hint: "Calculators, no case needed", needsRun: false,
+    subs: [{ id: "symmetrical", label: "Symmetrical components", doc: "symmetrical" },
+      { id: "line", label: "Line parameters", doc: "line" },
+      { id: "dispatch", label: "Economic dispatch", doc: "dispatch" }] },
+];
+
+const lastSub: Record<string, string> = {};
+
+/** The view and sub-view a document belongs to. */
+export function viewOf(doc: string): { view: ViewDef; sub: SubView } | null {
+  for (const view of VIEWS) {
+    const sub = view.subs.find((x) => x.doc === doc);
+    if (sub) return { view, sub };
+  }
+  return null;
+}
+
+export function docHref(doc: string): string {
+  const v = viewOf(doc);
+  return v ? `#/${v.view.id}/${v.sub.id}` : `#/doc/${doc}`;
+}
+
+/** The document the URL points at (new #/view/sub, #/view, or legacy #/doc/id). */
 export function currentDoc(fallback: string): string {
-  const m = /^#\/doc\/([\w-]+)/.exec(location.hash);
-  return m?.[1] ?? fallback;
+  const legacy = /^#\/doc\/([\w-]+)/.exec(location.hash);
+  if (legacy) return legacy[1]!;
+  const m = /^#\/([\w-]+)(?:\/([\w-]+))?/.exec(location.hash);
+  const view = VIEWS.find((x) => x.id === m?.[1]);
+  if (!view) return fallback;
+  const sub = view.subs.find((x) => x.id === m?.[2])
+    ?? view.subs.find((x) => x.id === lastSub[view.id]) ?? view.subs[0]!;
+  return sub.doc;
 }
 
 export function onRoute(fallback: string, open: (id: string) => void): void {
-  const go = () => open(currentDoc(fallback));
+  const go = () => {
+    const doc = currentDoc(fallback);
+    const v = viewOf(doc);
+    if (v) lastSub[v.view.id] = v.sub.id;
+    if (location.hash !== docHref(doc) && v) history.replaceState(null, "", docHref(doc));
+    open(doc);
+  };
   window.addEventListener("hashchange", go);
   go();
 }
 
-export function navigate(id: string): void {
-  if (location.hash !== docHref(id)) location.hash = docHref(id);
+export function navigate(doc: string): void {
+  if (location.hash !== docHref(doc)) location.hash = docHref(doc);
+}
+
+/** Open a view (its last-used sub-view, or the first). */
+export function navigateView(viewId: string): void {
+  const view = VIEWS.find((x) => x.id === viewId);
+  if (!view) return;
+  const sub = view.subs.find((x) => x.id === lastSub[viewId]) ?? view.subs[0]!;
+  navigate(sub.doc);
 }
 
 // ---- state -------------------------------------------------------------

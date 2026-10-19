@@ -1,6 +1,6 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { exportProject, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State, type View } from "./app";
+import { exportProject, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State, type View } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
 import { ICON, h } from "./ui";
@@ -168,7 +168,6 @@ export interface DocDef {
 }
 
 export class DocTabs {
-  private open: string[] = [];
   private panes = new Map<string, HTMLElement>();
   active = "";
 
@@ -187,7 +186,6 @@ export class DocTabs {
       pane.dataset.doc = id;
       this.host.append(pane);
       this.panes.set(id, pane);
-      this.open.push(id);
       def.mount(pane);
     }
     this.active = id;
@@ -195,47 +193,28 @@ export class DocTabs {
     this.paint();
   }
 
-  close(id: string): void {
-    const i = this.open.indexOf(id);
-    if (i < 0) return;
-    this.open.splice(i, 1);
-    this.panes.get(id)?.remove();
-    this.panes.delete(id);
-    if (this.active === id) {
-      const next = this.open[Math.min(i, this.open.length - 1)];
-      if (next) navigate(next);
-      else navigate("canvas");
-    } else {
-      this.paint();
-    }
-  }
-
   ids(): string[] {
-    return [...this.open];
+    return [...this.panes.keys()];
   }
 
+  /** Sub-tabs of the view the active document belongs to (hidden when the
+   *  view has only one). */
   private paint(): void {
-    const items = this.open.map((id) => {
-      const t = h("div", `tab${id === this.active ? " active" : ""}`);
+    const v = viewOf(this.active);
+    const subs = v?.view.subs ?? [];
+    this.strip.hidden = subs.length < 2;
+    this.strip.replaceChildren(...subs.map((s) => {
+      const t = h("div", `tab${s.doc === this.active ? " active" : ""}`, s.label);
       t.setAttribute("role", "tab");
-      t.setAttribute("aria-selected", String(id === this.active));
-      t.dataset.doc = id;
-      t.append(h("span", "", this.lookup(id).title));
-      const x = h("span", "x", "×");
-      x.title = "Close";
-      x.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.close(id);
-      });
-      t.append(x);
-      t.addEventListener("click", () => navigate(id));
-      t.addEventListener("auxclick", (e) => {
-        if (e.button === 1) this.close(id);
+      t.setAttribute("aria-selected", String(s.doc === this.active));
+      t.tabIndex = 0;
+      t.dataset.doc = s.doc;
+      t.addEventListener("click", () => navigate(s.doc));
+      t.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") navigate(s.doc);
       });
       return t;
-    });
-    this.strip.replaceChildren(...items);
-    this.strip.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }));
     this.onChange(this.ids(), this.active);
   }
 }

@@ -4,7 +4,7 @@ import "./tokens.css";
 import "./workspace.css";
 import "./canvas";
 import { currentDoc, getState, mountBusy, onRoute, setState } from "./app";
-import { DOC_TITLES, lookupDoc } from "./documents";
+import { lookupDoc } from "./documents";
 import { mountTree } from "./panels";
 import { DocTabs, buildShell, mountChrome, mountToolbar } from "./shell";
 
@@ -22,5 +22,4 @@ const tabs = new DocTabs(shell.tabs, shell.docs, lookupDoc,
 // reopen the documents of the last session, then follow the URL
 const s = getState();
 const start = currentDoc(s.activeDoc || "canvas");
-for (const id of s.openDocs) if (id in DOC_TITLES && id !== start) tabs.show(id);
 onRoute(start, (id) => tabs.show(id));

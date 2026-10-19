@@ -20,4 +20,5 @@ def ai_report(summary, model, url=LMSTUDIO_URL):
     r = requests.post(f"{url}/chat/completions", timeout=300, json={
         "model": model, "temperature": 0.3, "max_tokens": 700,
         "messages": [{"role": "user", "content": prompt}]})
+    r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]

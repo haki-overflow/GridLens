@@ -24,6 +24,7 @@ export interface State {
   solvedCase: CaseData | null; // the case the results belong to
   solvedSig: string | null;
   selection: Selection | null;
+  conversion: { zones: Rec[]; table: Rec[] } | null; // textbook per-unit check, for the worked answer
   outage: number | null; // index of the line shown tripped on the diagram
   openDocs: string[];
   activeDoc: string;
@@ -39,7 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const KEY = "gridlens.project";
 const fresh = (): State => ({
-  case: null, results: null, solvedCase: null, solvedSig: null, selection: null, outage: null,
+  case: null, results: null, solvedCase: null, solvedSig: null, selection: null, outage: null, conversion: null,
   openDocs: ["canvas"], activeDoc: "canvas",
   view: { grid: true, flows: false, angles: false }, messages: [],
   fileName: "untitled.gridlens.json",
@@ -83,7 +84,8 @@ export function setState(patch: Partial<State>): void {
 }
 
 export function caseSig(c: CaseData | null): string | null {
-  return c ? JSON.stringify([c.bus, c.lines, c.settings]) : null;
+  // bar positions (x, y) only place the diagram; they do not change results
+  return c ? JSON.stringify([c.bus.map(({ x: _x, y: _y, ...b }) => b), c.lines, c.settings]) : null;
 }
 
 export function isStale(s: State = state): boolean {

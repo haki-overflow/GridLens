@@ -351,6 +351,46 @@ def topu(body: ToPuIn):
     return to_json(r)
 
 
+@app.get("/api/units/example")
+def units_example():
+    """The textbook example (real units) that the input wizard starts from."""
+    ex = units.EXAMPLE
+    return to_json({"sbase": ex["sbase"], "ref_bus": ex["ref_bus"], "ref_kv": ex["ref_kv"],
+                    "buses": ex["buses"], "lines": ex["lines"], "trafos": ex["trafos"],
+                    "z_units": list(units.Z_UNITS), "b_units": list(units.B_UNITS)})
+
+
+# --------------------------------------------------------------- AI write-up
+class ReportIn(BaseModel):
+    summary: str
+    model: str
+
+
+@app.get("/api/lm/models")
+def lm_models_ep():
+    """Models loaded in LM Studio (empty when the server is not running)."""
+    import ai_report
+    return {"models": ai_report.lm_models(), "url": ai_report.LMSTUDIO_URL}
+
+
+@app.post("/api/report")
+def report(body: ReportIn):
+    """Plain-English write-up of the solver's own summary by a local model;
+    the model only rephrases the numbers it is given."""
+    import ai_report
+    import requests
+    try:
+        return {"text": ai_report.ai_report(body.summary, body.model)}
+    except requests.ConnectionError:
+        raise Problems([f"LM Studio is not reachable at {ai_report.LMSTUDIO_URL}. Open LM Studio, "
+                        "load a model and start the server (Developer tab)."])
+    except requests.HTTPError as e:
+        raise Problems([f"LM Studio refused the request ({e.response.status_code}). Check that "
+                        f"the model id \"{body.model}\" is loaded."])
+    except Exception as e:  # noqa: BLE001 - reported to the user, never a stack trace
+        raise Problems([f"The write-up failed: {e}"])
+
+
 # ------------------------------------------------------------ static web app
 class _Web(StaticFiles):
     """web/dist (the workspace built by `npm run build`) at "/". Checked on

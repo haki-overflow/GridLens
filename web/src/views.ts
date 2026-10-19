@@ -1,7 +1,7 @@
 // Document views. Each one renders from the last study (or its own API
 // call on the solved case) and keeps showing the previous content while a
 // new request runs, so the screen never blanks.
-import { post, type Rec } from "./api";
+import { get, post, type Rec } from "./api";
 import { report } from "./actions";
 import { registerDoc } from "./docs";
 import { h } from "./shell";
@@ -9,7 +9,8 @@ import { getState, isStale, subscribe, type CaseData, type State, type Study } f
 import {
   cards, field, fmt, headline, matrix, notice, NEED_RUN, numIn, section, selectIn, subtabs, table, title,
 } from "./ui";
-import { stackedPlot } from "./charts";
+import { phasorDiagram, stackedPlot } from "./charts";
+import { csv, download, zip } from "./zip";
 
 type Paint = (body: HTMLElement, r: Study, c: CaseData) => void;
 
@@ -257,7 +258,7 @@ apiDoc("iterations", "Iterations", "Step-by-step Newton-Raphson, Gauss-Seidel or
       return;
     }
     const its = tr.its as Rec[];
-    el.append(table(its.map((it) => ({ Iter: it.k, "max mismatch": n(it.err).toExponential(3) }))));
+    el.append(table(its.map((it) => ({ Iter: it.done ? "check" : it.k, "max mismatch": n(it.err).toExponential(3) }))));
     if (d.method === "Newton-Raphson") {
       for (const it of its.filter((x) => !x.done)) {
         el.append(section(`Iteration ${it.k}: mismatch and corrections`));
@@ -276,7 +277,8 @@ apiDoc("answer", "Worked answer", "The solution written out as text, ready to co
     const show = numIn(2, "1", 60);
     row.append(field("Iterations written out", show));
     show.addEventListener("change", refresh);
-    return () => ({ show: Math.max(1, Math.min(10, Number(show.value) || 2)) });
+    return () => ({ show: Math.max(1, Math.min(10, Number(show.value) || 2)),
+      conversion: getState().conversion ?? undefined });
   },
   "/api/answer", (el, d) => {
     const text = String(d.text);
@@ -297,9 +299,71 @@ apiDoc("answer", "Worked answer", "The solution written out as text, ready to co
   });
 
 // ---------------------------------------------------------------------- report
-resultsDoc("report", "Study report", "The study summary the solver produced (the AI write-up is in the Streamlit app).",
+resultsDoc("report", "Study report", "The solver's summary, an optional plain-English write-up, and the results as files.",
   (el, r) => {
-    el.append(h("pre", "answer", r.summary));
+    const pre = h("pre", "answer", r.summary);
+    const exp = h("div", "inputs");
+    const zipB = h("button", "btn primary", "Download results (.zip)");
+    zipB.title = "Bus report, branch report, solver check, N-1 and the summary as CSV / text";
+    zipB.addEventListener("click", () => {
+      const c = getState().case;
+      const k = r.base;
+      const busRows = r.res.map((x, i) => ({ Bus: x.Bus, Type: c?.bus[i]?.Type, "V (pu)": x["V (pu)"],
+        "Angle (deg)": x["Angle (deg)"], "P inj (MW)": n(x.P_inj) * k, "Q inj (MVAr)": n(x.Q_inj) * k }));
+      const brRows = r.flows.map((f) => ({ From: f.From, To: f.To, "P from (MW)": n(f.P_ij) * k,
+        "Q from (MVAr)": n(f.Q_ij) * k, "P to (MW)": n(f.P_ji) * k, "Q to (MVAr)": n(f.Q_ji) * k,
+        "Loss (MW)": n(f.Loss_P) * k, "Loss (MVAr)": n(f.Loss_Q) * k }));
+      const name = (c?.name ?? "case").replace(/[^\w-]+/g, "_");
+      download(zip([
+        { name: "bus_report.csv", text: csv(busRows) }, { name: "branch_report.csv", text: csv(brRows) },
+        { name: "solver_check.csv", text: csv(r.cmp) }, { name: "n1_contingency.csv", text: csv(r.n1) },
+        { name: "summary.txt", text: r.summary }]), `${name}_results.zip`);
+    });
+    exp.append(zipB);
+
+    const sec = section("Plain-English write-up (local model, LM Studio)");
+    const note = h("div", "cap", "The model only rephrases the numbers above; it does no calculation. " +
+      "Start LM Studio, load a model and start its server first.");
+    const row = h("div", "inputs");
+    const model = h("select");
+    const typed = h("input");
+    typed.placeholder = "model id";
+    typed.hidden = true;
+    const gen = h("button", "btn", "Generate write-up");
+    const out = h("div");
+    row.append(field("Model", model), typed, gen);
+    const loadModels = async () => {
+      try {
+        const m = (await get<{ models: string[] }>("/api/lm/models")).models;
+        model.replaceChildren(...m.map((x) => new Option(x, x)));
+        const g = m.findIndex((x) => x.toLowerCase().includes("gemma"));
+        if (g >= 0) model.selectedIndex = g;
+        const none = m.length === 0;
+        model.hidden = none;
+        typed.hidden = !none;
+        if (none) note.textContent = "LM Studio was not detected at 127.0.0.1:1234. Start its server, or type a model id.";
+      } catch (e) {
+        report(e, "Listing LM Studio models");
+      }
+    };
+    gen.addEventListener("click", async () => {
+      const id = model.hidden ? typed.value.trim() : model.value;
+      if (!id) { out.replaceChildren(h("div", "gl-bad", "Pick or type a model id first.")); return; }
+      gen.disabled = true;
+      out.replaceChildren(h("div", "cap", "Writing..."));
+      try {
+        const t = (await post<{ text: string }>("/api/report", { summary: r.summary, model: id })).text;
+        const dl = h("button", "btn", "Download .md");
+        dl.addEventListener("click", () => download(new Blob([t], { type: "text/markdown" }), "gridlens_report.md"));
+        out.replaceChildren(h("pre", "answer wrap", t), dl);
+      } catch (e) {
+        out.replaceChildren(h("div", "gl-bad", e instanceof Error ? e.message : String(e)));
+      } finally {
+        gen.disabled = false;
+      }
+    });
+    el.append(exp, section("Study summary"), pre, sec, note, row, out);
+    void loadModels();
   });
 
 // -------------------------------------------------- calculators (no case needed)
@@ -339,12 +403,19 @@ calcDoc("symmetrical", "Symmetrical components", "Phase quantities to sequence c
     }
     return () => ({ abc: [0, 2, 4].map((k) => ({ mag: Number(ins[k]![1].value), deg: Number(ins[k + 1]![1].value) })) });
   },
-  "/api/symcomp", (el, d) => {
+  "/api/symcomp", (el, d, req) => {
     const s = d.s012 as Rec[];
     const m = (z: Rec | undefined) => Math.hypot(n(z?.re), n(z?.im));
-    el.append(headline(`Unbalance V2/V1 = ${(m(s[2]) / Math.max(m(s[1]), 1e-12) * 100).toFixed(2)} %`),
+    el.append(headline(`Unbalance V2/V1 = ${(m(s[2]) / Math.max(m(s[1]), 1e-12) * 100).toFixed(2)} %`));
+    const abc = (req.abc as { mag: number; deg: number }[]).map((z, i) => ({
+      name: ["Va", "Vb", "Vc"][i]!, re: z.mag * Math.cos(z.deg * Math.PI / 180),
+      im: z.mag * Math.sin(z.deg * Math.PI / 180) }));
+    const seq = s.map((z, i) => ({ name: ["V0", "V1", "V2"][i]!, re: n(z?.re), im: n(z?.im) }));
+    const row = h("div", "phasor-row");
+    row.append(phasorDiagram("Phase voltages", abc), phasorDiagram("Sequence components", seq),
       table([{ Component: "V0 (zero)", Value: s[0] }, { Component: "V1 (positive)", Value: s[1] },
         { Component: "V2 (negative)", Value: s[2] }]));
+    el.append(row);
   });
 
 calcDoc("line", "Line parameters", "ABCD constants, regulation and efficiency of a transmission line.",

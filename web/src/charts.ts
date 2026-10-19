@@ -146,3 +146,44 @@ export function stackedPlot(x: number[], panels: Panel[], o: {
   });
   return wrap;
 }
+
+// ---- phasor diagram (arrows from the origin, unit circle, polar grid) -------
+export interface Phasor { name: string; re: number; im: number; colour?: string }
+
+export function phasorDiagram(title: string, items: Phasor[], size = 300): HTMLElement {
+  const S = size, c = S / 2, pad = 34;
+  const rmax = Math.max(1, ...items.map((p) => Math.hypot(p.re, p.im))) * 1.1;
+  const k = (c - pad) / rmax;
+  const svg = d3.create("svg").attr("class", "chart phasor").attr("viewBox", `0 0 ${S} ${S}`)
+    .attr("width", S).attr("height", S).attr("role", "img").attr("aria-label", title);
+  svg.append("rect").attr("class", "frame").attr("x", 1).attr("y", 1).attr("width", S - 2).attr("height", S - 2);
+  for (const r of [0.5, 1]) {
+    svg.append("circle").attr("cx", c).attr("cy", c).attr("r", r * k)
+      .style("fill", "none").style("stroke", "var(--grid)").style("stroke-dasharray", r === 1 ? "none" : "3 3");
+  }
+  svg.append("line").attr("x1", 6).attr("x2", S - 6).attr("y1", c).attr("y2", c).style("stroke", "var(--axis)");
+  svg.append("line").attr("x1", c).attr("x2", c).attr("y1", 6).attr("y2", S - 6).style("stroke", "var(--axis)");
+  svg.append("text").attr("x", S - 8).attr("y", c - 4).attr("text-anchor", "end").style("fill", "var(--muted)").text("Re");
+  svg.append("text").attr("x", c + 5).attr("y", 16).style("fill", "var(--muted)").text("Im");
+  const defs = svg.append("defs");
+  items.forEach((p, i) => {
+    const col = p.colour ?? `var(${PALETTE[i % PALETTE.length]})`;
+    const id = `ah-${title.replace(/\W+/g, "")}-${i}`;
+    defs.append("marker").attr("id", id).attr("viewBox", "0 0 10 10").attr("refX", 9).attr("refY", 5)
+      .attr("markerWidth", 7).attr("markerHeight", 7).attr("orient", "auto-start-reverse")
+      .append("path").attr("d", "M0,0L10,5L0,10Z").style("fill", col);
+    const x = c + p.re * k, y = c - p.im * k;
+    svg.append("line").attr("x1", c).attr("y1", c).attr("x2", x).attr("y2", y)
+      .style("stroke", col).style("stroke-width", 2).attr("marker-end", `url(#${id})`);
+    const len = Math.hypot(p.re, p.im) || 1;
+    svg.append("text").attr("x", x + (p.re / len) * 9).attr("y", y - (p.im / len) * 9 + 3)
+      .attr("text-anchor", p.re >= 0 ? "start" : "end").style("fill", col).style("font-weight", 700).text(p.name);
+  });
+  const wrap = document.createElement("div");
+  wrap.className = "phasor-box";
+  const cap = document.createElement("div");
+  cap.className = "cap";
+  cap.textContent = title;
+  wrap.append(cap, svg.node()!);
+  return wrap;
+}

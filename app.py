@@ -226,6 +226,9 @@ def _sidebar():
                 st.download_button(name, data=body.encode(), file_name=name,
                                    mime="text/csv", key=f"tpl_{name}")
 
+        st.link_button("Open workspace (new UI)", "http://localhost:8000",
+                       help="The PSCAD-style workspace. Start it with "
+                            "./run_workspace.sh.", width="stretch")
         if std:
             with st.expander("Study settings", expanded=False):
                 _settings(adv)

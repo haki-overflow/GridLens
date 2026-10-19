@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# Build the web workspace if web/dist is missing or older than its sources,
-# then serve it (and the API) on http://localhost:8000.
-set -e
+# Build the workspace (web/) if needed, then serve it with the API on :8000.
 cd "$(dirname "$0")"
-if [ ! -f web/dist/index.html ] || \
-   [ -n "$(find web/src web/index.html web/package.json web/vite.config.ts \
-           -newer web/dist/index.html -print -quit)" ]; then
-  echo "Building web workspace..."
-  [ -d web/node_modules ] || (cd web && npm install)
-  (cd web && npm run build)
+if [ ! -f web/dist/index.html ] || [ -n "$(find web/src web/index.html -newer web/dist/index.html -print -quit 2>/dev/null)" ]; then
+  (cd web && { [ -d node_modules ] || npm install --no-audit --no-fund; } && npm run build) || exit 1
 fi
-exec venv/bin/uvicorn api.server:app --port 8000 "$@"
+PY=python3; [ -x venv/bin/python ] && PY=venv/bin/python
+exec "$PY" -m uvicorn api.server:app --port 8000 "$@"

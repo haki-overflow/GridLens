@@ -304,3 +304,30 @@ pre.answer { background: var(--canvas); border: 1px solid var(--border); padding
 .stack .cross { stroke: var(--text); stroke-width: 1; opacity: .6; pointer-events: none; }
 .stack .cross-read { fill: var(--text); font-family: var(--mono); pointer-events: none; }
 .stack .ylab { fill: var(--muted); }
+
+/* ---- phasor diagrams -------------------------------------------------------- */
+.phasor-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-top: 10px; }
+.phasor-box .cap { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+.phasor { font-size: 11px; }
+.phasor .frame { fill: var(--canvas); stroke: var(--axis); }
+
+/* ---- wizard dialog ---------------------------------------------------------- */
+dialog.wizard { width: min(980px, 94vw); max-height: 88vh; padding: 0; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); }
+dialog.wizard::backdrop { background: rgba(0, 0, 0, .55); }
+.wz-head { padding: 10px 14px 0; background: var(--hdr); border-bottom: 1px solid var(--border); }
+.wz-title { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; margin-bottom: 8px; }
+.wz-steps { display: flex; gap: 2px; }
+.wz-steps span { padding: 4px 12px; font-size: 11px; color: var(--muted); border-bottom: 2px solid transparent; }
+.wz-steps span.on { color: var(--text); border-bottom-color: var(--accent); }
+.wz-steps span.done { color: var(--green); }
+.wz-body { padding: 12px 14px; max-height: 58vh; overflow: auto; }
+.wz-foot { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); }
+.wz-foot .fill { flex: 1; }
+.wz-table { overflow: auto; }
+.wz-table input, .wz-table select { height: 22px; font: inherit; font-family: var(--mono); color: var(--text);
+  background: var(--field); border: 1px solid var(--border); }
+.wz-table input.bad { border-color: var(--red); }
+.wz-review .sec { margin: 12px 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--muted); }
+pre.answer.wrap { white-space: pre-wrap; }

@@ -202,3 +202,22 @@ One main result per screen; detail sits behind tabs or pop-ups.
 
 `./run_workspace.sh` builds `web/` (Vite + TypeScript + D3) when needed and serves it with the API on http://localhost:8000. Layout: title readouts, toolbar (Run F5, Reset, preset / Import / Export `.gridlens.json`, Fit Ctrl+0, Grid, Flows, Angles, Report), project tree, tabbed documents (`#/doc/<id>`) over a Messages panel, properties panel, status bar. Panels resize with splitters (double-click resets). Colours come from `web/src/tokens.css`, generated from `theme.css` by `python tools/sync_tokens.py` (pytest checks they match). Development: run the API (`./run_api.sh`) and `cd web && npm run dev` (proxies `/api`).
 
+
+
+## Workspace (v1.3): PSCAD-style UI
+
+A second front end next to the Streamlit app. A small FastAPI server (`api/`) exposes the existing solver and study modules as JSON; the browser app in `web/` (Vite + TypeScript + D3) draws a workspace: project tree, toolbar, schematic canvas, properties grid, output panel and stacked plots on one screen.
+
+```
+./run_workspace.sh          # builds web/ if needed, serves it and the API on http://localhost:8000
+./run_api.sh                # API only, with --reload; /docs is the interactive API page
+cd web && npm run dev       # front-end dev server (proxies /api to :8000)
+```
+
+- **Layout:** title row, toolbar (Run F5, Reset, case, Textbook, Import/Export, Fit/Grid/Flows/Angles, Report), project tree, document tabs over an output panel, properties panel, status bar. Panels are resizable and remember their size.
+- **Diagram:** one-line schematic with component names; drag a bus to move it (positions are saved in the case); click a bus or branch to edit it in the properties panel. Editing marks results STALE until the next Run; moving a bus does not.
+- **Output panel:** Messages, Bus report, Branch report, Solver check, N-1. Clicking an N-1 row draws that outage on the diagram.
+- **Documents:** Load flow, Solver check, Contingency N-1, PV analysis (stacked plots with crosshair), Fault levels, Unsymmetrical faults, Ybus matrix, Iterations, Worked answer, Symmetrical components (phasor diagrams), Line parameters, Economic dispatch, Study report.
+- **Textbook input:** the Textbook button opens a 5-step wizard (system base, buses, lines, transformers, per-unit review) and loads the result as the project; the Worked answer then includes the conversion.
+- **Study report:** download the results as a ZIP of CSVs; optional plain-English write-up from LM Studio (the model only rephrases the solver's numbers).
+- **Checks:** `python -m pytest`; `python tools/sync_tokens.py --check` (the web colours must equal `theme.css`); `python tools/shots.py` screenshots every document at 1366x768 and reports any page that scrolls (set `CHROME=` if Playwright cannot find a browser).

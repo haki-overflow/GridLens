@@ -199,3 +199,37 @@ def test_root_serves_web_build(tmp_path, monkeypatch):
     r = client.get("/")
     assert r.status_code == 200 and "GridLens" in r.text
     assert client.get("/api/cases").status_code == 200   # API still wins
+
+
+# ------------------------------------------------- workspace extras (v1.3)
+def test_units_example_matches_module():
+    d = client.get("/api/units/example").json()
+    assert d["sbase"] == units.EXAMPLE["sbase"] and d["ref_bus"] == units.EXAMPLE["ref_bus"]
+    assert d["z_units"] == list(units.Z_UNITS) and d["b_units"] == list(units.B_UNITS)
+    body = dict(sbase=d["sbase"], ref_bus=d["ref_bus"], ref_kv=d["ref_kv"],
+                buses=d["buses"], lines=d["lines"], trafos=d["trafos"])
+    r = client.post("/api/topu", json=body)
+    assert r.status_code == 200 and len(r.json()["bus"]) == len(d["buses"])
+
+
+def test_lm_models_empty_without_server(monkeypatch):
+    import ai_report
+    monkeypatch.setattr(ai_report, "lm_models", lambda url=None: [])
+    assert client.get("/api/lm/models").json()["models"] == []
+
+
+def test_report_says_when_lm_studio_is_down(monkeypatch):
+    import ai_report
+    import requests
+
+    def down(*a, **k):
+        raise requests.ConnectionError("refused")
+    monkeypatch.setattr(ai_report, "ai_report", down)
+    r = client.post("/api/report", json={"summary": "x", "model": "m"})
+    assert r.status_code == 422 and "not reachable" in r.json()["problems"][0]
+
+
+def test_report_returns_the_models_text(monkeypatch):
+    import ai_report
+    monkeypatch.setattr(ai_report, "ai_report", lambda s, m: f"{m}:{s}")
+    assert client.post("/api/report", json={"summary": "S", "model": "M"}).json() == {"text": "M:S"}

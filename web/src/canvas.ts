@@ -41,6 +41,7 @@ registerDoc("canvas", (el) => {
   chip.addEventListener("click", () => setState({ outage: null }));
   wrap.append(chip);
 
+  let caseKey = "";
   let layout: Layout | null = null;
   let layoutSig: string | null = null;
   let token = 0;
@@ -167,13 +168,15 @@ registerDoc("canvas", (el) => {
         if (od && k === s.outage) return;
         const f = flowRows[od && s.outage !== null && k > s.outage ? k - 1 : k] as Rec | undefined;
         if (!f || pts.length < 2) return;
-        let best = 0, at: [number, number] = pts[0]!;
+        let best = 0, at: [number, number] = pts[0]!, horiz = false;
         for (let j = 1; j < pts.length; j++) {
           const a = pts[j - 1]!, b = pts[j]!;
           const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          if (len > best) [best, at] = [len, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]];
+          if (len > best) [best, at, horiz] = [len, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+            Math.abs(b[0] - a[0]) > Math.abs(b[1] - a[1])];
         }
-        gText.append("text").attr("class", "flow-label").attr("x", at[0] + 0.12).attr("y", at[1])
+        gText.append("text").attr("class", "flow-label").attr("x", horiz ? at[0] : at[0] + 0.12)
+          .attr("y", horiz ? at[1] - 0.18 : at[1]).attr("text-anchor", horiz ? "middle" : "start")
           .text(`${(Number(f.P_ij) * fresh.base).toFixed(1)} MW`);
       });
     }
@@ -211,9 +214,15 @@ registerDoc("canvas", (el) => {
       const L = await post<Layout>("/api/layout", c);
       if (my !== token) return;
       const first = !layout;
+      const key = `${c.name}|${c.bus.length}|${c.lines.length}`;
+      const newCase = key !== caseKey;
+      caseKey = key;
       layout = L;
       draw(getState());
-      if (first || !fitted) {
+      if (newCase) {
+        fit(false);
+        fitted = wrap.getBoundingClientRect().width > 10;
+      } else if (first || !fitted) {
         fit(false);
         fitted = wrap.getBoundingClientRect().width > 10;
       }

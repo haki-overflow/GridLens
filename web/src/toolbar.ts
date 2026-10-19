@@ -4,6 +4,7 @@ import { loadPreset, presets, report, reset, run } from "./actions";
 import { ICON } from "./icons";
 import { navigate } from "./router";
 import { h } from "./shell";
+import { openWizard } from "./wizard";
 import { exportProject, getState, importProject, isStale, setState, subscribe, type View } from "./state";
 
 function btn(icon: string, label: string, title: string, testid?: string): HTMLButtonElement {
@@ -35,6 +36,7 @@ export function mountToolbar(bar: HTMLElement): void {
   const sel = h("select", "tb-select");
   sel.title = "Preset case";
   sel.setAttribute("aria-label", "Preset case");
+  const textB = btn(ICON.report, "Textbook", "New case from textbook data in real units (MVA, kV, ohm)");
   const importB = btn(ICON.open, "Import", "Open a .gridlens.json project");
   const exportB = btn(ICON.save, "Export", "Save the case as .gridlens.json");
   const file = h("input");
@@ -51,12 +53,13 @@ export function mountToolbar(bar: HTMLElement): void {
   const reportB = btn(ICON.report, "Report", "Open the study report");
 
   bar.append(
-    group(runB, stale), group(resetB), group(sel, importB, exportB, file),
+    group(runB, stale), group(resetB), group(sel, textB, importB, exportB, file),
     group(fitB, ...toggles.map(([, b]) => b)), group(reportB));
 
   runB.addEventListener("click", () => void run());
   resetB.addEventListener("click", () => void reset());
   sel.addEventListener("change", () => void loadPreset(sel.value));
+  textB.addEventListener("click", () => void openWizard());
   importB.addEventListener("click", () => file.click());
   file.addEventListener("change", async () => {
     const f = file.files?.[0];
@@ -93,7 +96,14 @@ export function mountToolbar(bar: HTMLElement): void {
       b.classList.toggle("on", s.view[k]);
       b.setAttribute("aria-pressed", String(s.view[k]));
     }
-    if (s.case && [...sel.options].some((o) => o.value === s.case!.name)) sel.value = s.case.name;
+    if (s.case) {
+      if (![...sel.options].some((o) => o.value === s.case!.name)) {
+        const o = h("option", "", s.case.name);
+        o.value = s.case.name;
+        sel.prepend(o);
+      }
+      sel.value = s.case.name;
+    }
   };
   subscribe(paint);
   paint();

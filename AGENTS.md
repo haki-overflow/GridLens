@@ -111,3 +111,10 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - Coding agent: open-weight model via opencode (user's choice, e.g. DeepSeek).
 - In-app report: local Gemma through LM Studio (OpenAI-compatible API).
 - `opencode.json` is optional and only configures opencode itself. The app does not read it.
+
+## Workspace UI (v1.3)
+- `api/server.py` + `api/schema.py`: JSON endpoints over the existing modules (no maths in the API). `gridcore.py` holds the pure `prep_case`, `run_study`, `outage` that both the Streamlit app and the API call.
+- `web/` (Vite + TypeScript + D3, no framework): `state.ts` (project store + localStorage), `toolbar.ts`, `tree.ts`, `canvas.ts` (D3 diagram, layout from `/api/layout`), `props.ts` (property grid), `output.ts` (output tabs), `views.ts` (study documents), `charts.ts` (stackedPlot, phasorDiagram), `wizard.ts` (textbook input), `zip.ts`.
+- Colours come only from `web/src/tokens.css`, a copy of the `:root` block in `theme.css`; edit `theme.css` and run `python tools/sync_tokens.py` (a test fails if they differ).
+- Bar positions are stored as bus columns `x`, `y` in raw diagram units that are never all whole numbers (`oneline._xy_columns` reads whole numbers as grid cells). They are not part of the staleness check.
+- No calculation code lives in `web/`: every number comes from the API.

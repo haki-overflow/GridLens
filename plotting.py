@@ -1,178 +1,14 @@
 """GridLens matplotlib figures, styled by ui_theme (planning-tool look).
 
-All figures share one palette (ui_theme.LIGHT): white background, grey axes,
-accent blue data, red only for limit violations/limits.
+All figures share one palette (ui_theme.PAL): dark canvas with a thin boxed
+axis, cyan data, red only for limit violations/limits. The interactive
+one-line diagram lives in oneline.py (Plotly).
 """
 import numpy as np
-import pandas as pd
 
 import ui_theme as T
 
-P = T.LIGHT
-
-
-def _layout(n, edges, seed=1):
-    """Deterministic spring layout in [0, 1]^2 with a minimum separation."""
-    rng = np.random.default_rng(seed)
-    pos = rng.random((n, 2))
-    k = 1 / np.sqrt(n)
-    for it in range(250):
-        d = pos[:, None] - pos[None]
-        dist = np.linalg.norm(d, axis=2) + 1e-9
-        disp = (d / dist[..., None] * (k**2 / dist)[..., None]).sum(1)
-        for i, j in edges:
-            dv = pos[i] - pos[j]
-            dd = np.linalg.norm(dv) + 1e-9
-            disp[i] -= dv / dd * dd**2 / k
-            disp[j] += dv / dd * dd**2 / k
-        L = np.linalg.norm(disp, axis=1)[:, None] + 1e-9
-        pos += disp / L * np.minimum(L, 0.1 * (1 - it / 250))
-    for _ in range(40):  # push apart nodes that ended up too close
-        d = pos[:, None] - pos[None]
-        dist = np.linalg.norm(d, axis=2) + 1e-9
-        close = (dist < 0.09) & (dist > 1e-6)
-        if not close.any():
-            break
-        i, j = np.argwhere(np.triu(close, 1)).T
-        for a, b in zip(i, j):
-            u = d[a, b] / dist[a, b]
-            pos[a] += 0.5 * (0.09 - dist[a, b]) * u
-            pos[b] -= 0.5 * (0.09 - dist[a, b]) * u
-    pos -= pos.min(0)
-    span = pos.max(0) + 1e-9
-    pos = 0.08 + 0.84 * pos / span
-    return pos
-
-
-def _vband(v, vmin, vmax, margin=0.02):
-    """Voltage band colour: violation red/violet, near-limit amber, else ink."""
-    if v < vmin:
-        return P["red"]
-    if v > vmax:
-        return P["violet"]
-    if v < vmin + margin or v > vmax - margin:
-        return P["amber"]
-    return P["text"]
-
-
-def draw_network(res, lines, vmin, vmax, flows=None, base=100.0,
-                 tripped=None, bus=None):
-    """One-line diagram in the style of planning tools: each bus is a short
-    thick bus bar coloured by voltage band, generators (Slack/PV) drawn as a
-    circled ~ above the bar, loads as an arrow below it. Branch width follows
-    |P|, an arrow marks flow direction and the MW value sits on the branch.
-    tripped: index of an outaged line (dashed red; flows has one row fewer).
-    bus: input bus table, used for the generator and load symbols."""
-    plt = T.mpl_style()
-    n = len(res)
-    edges = [(int(a) - 1, int(b) - 1)
-             for a, b in zip(lines["From"], lines["To"])]
-    pos = _layout(n, edges)
-    v = res["V (pu)"].to_numpy(dtype=float)
-    ang = res["Angle (deg)"].to_numpy(dtype=float)
-    hw = 0.045  # bus bar half width
-    anchors = np.vstack([pos, pos + [0.0, 0.06], pos - [0.0, 0.06],
-                         pos + [hw + 0.07, 0.0]])
-
-    lw = np.full(len(edges), 1.4)
-    p_mw = None
-    dirs = np.ones(len(edges))
-    if flows is not None and tripped is not None:
-        flows = flows.copy()
-        top, rest = flows.iloc[:tripped], flows.iloc[tripped:]
-        flows = pd.concat([top, flows.iloc[:0].reindex([0]), rest])
-    if flows is not None and len(flows) == len(edges):
-        pij = np.nan_to_num(np.asarray(flows["P_ij"], dtype=float))
-        p_mw = pij * base
-        p = np.abs(pij)
-        if len(p) and p.max() > 0:
-            lw = 1.2 + 2.6 * p / p.max()
-        dirs = np.where(pij >= 0, 1, -1)
-
-    def tap(i, j):  # where branch i-j meets bus bar i
-        x = np.clip(pos[j, 0], pos[i, 0] - hw * 0.8, pos[i, 0] + hw * 0.8)
-        return np.array([x, pos[i, 1]])
-
-    fig, ax = plt.subplots(figsize=(7.6, 5.0))
-    for ek, (i, j) in enumerate(edges):
-        a, b = tap(i, j), tap(j, i)
-        if ek == tripped:
-            ax.plot(*zip(a, b), c=P["red"], lw=1.4, ls=(0, (4, 3)), zorder=1)
-            ax.plot(*((a + b) / 2), marker="X", ms=9, color=P["red"],
-                    mec=P["plot_bg"], zorder=4)
-            continue
-        ax.plot(*zip(a, b), c=P["line"], lw=float(lw[ek]), zorder=1,
-                solid_capstyle="butt")
-        u = b - a
-        u = u / (np.linalg.norm(u) + 1e-9)
-        if dirs[ek] < 0:
-            u = -u
-        mid = (a + b) / 2
-        ax.annotate("", xy=mid + 0.03 * u, xytext=mid - 0.03 * u, zorder=3,
-                    arrowprops=dict(arrowstyle="-|>", color=P["text"],
-                                    lw=0.9, mutation_scale=10))
-        if p_mw is not None:
-            t = 0.32 if dirs[ek] > 0 else 0.68
-            perp = np.array([-u[1], u[0]]) * 0.03
-
-            def pick(pos_):
-                s_ = (pos_ + perp, pos_ - perp)
-                near_ = [np.linalg.norm(anchors - q, axis=1).min() for q in s_]
-                return (s_[0], near_[0]) if near_[0] >= near_[1] else \
-                    (s_[1], near_[1])
-
-            lab, gap = pick(a + (b - a) * t)
-            if gap < 0.06:
-                lab2, gap2 = pick(a + (b - a) * (t + (0.5 - t) * 0.6))
-                if gap2 > gap:
-                    lab = lab2
-            ax.text(lab[0], lab[1], f"{abs(p_mw[ek]):.1f}", fontsize=7,
-                    family="monospace", ha="center", va="center",
-                    color=P["muted"], zorder=4,
-                    bbox=dict(boxstyle="square,pad=0.15",
-                              facecolor=P["plot_bg"], edgecolor="none"))
-
-    types = bus["Type"].to_numpy() if bus is not None else np.full(n, "PQ")
-    pd_ = bus["Pd"].to_numpy(dtype=float) if bus is not None else np.zeros(n)
-    for i in range(n):
-        x, y = pos[i]
-        col = _vband(v[i], vmin, vmax)
-        ax.plot([x - hw, x + hw], [y, y], color=col, lw=5.5,
-                solid_capstyle="butt", zorder=5)
-        if types[i] in ("Slack", "PV"):
-            ax.plot([x, x], [y, y + 0.035], color=P["text"], lw=1, zorder=5)
-            ax.add_patch(plt.Circle((x, y + 0.055), 0.02, fill=True,
-                                    facecolor=P["plot_bg"],
-                                    edgecolor=P["text"], lw=1.1, zorder=6))
-            ax.text(x, y + 0.055, "~", ha="center", va="center",
-                    fontsize=10, color=P["text"], zorder=7)
-        if pd_[i] > 0:
-            ax.annotate("", xy=(x, y - 0.06), xytext=(x, y - 0.004),
-                        zorder=5, arrowprops=dict(arrowstyle="-|>", lw=1.1,
-                                                  color=P["text"],
-                                                  mutation_scale=9))
-        ax.text(x - hw - 0.008, y, f"{i + 1}", ha="right", va="center",
-                fontsize=8, fontweight=700, color=P["text"], zorder=6)
-        ax.text(x + hw + 0.008, y, f"{v[i]:.3f}\n{ang[i]:.1f}\u00b0",
-                ha="left", va="center", fontsize=6.8, family="monospace",
-                color=col, zorder=6, linespacing=1.1,
-                bbox=dict(boxstyle="square,pad=0.1", facecolor=P["plot_bg"],
-                          edgecolor="none"))
-
-    from matplotlib.lines import Line2D
-    keys = [Line2D([], [], color=P["text"], lw=5, label="normal"),
-            Line2D([], [], color=P["amber"], lw=5,
-                   label="within 0.02 pu of limit"),
-            Line2D([], [], color=P["red"], lw=5, label=f"< {vmin:.2f} pu"),
-            Line2D([], [], color=P["violet"], lw=5, label=f"> {vmax:.2f} pu")]
-    ax.legend(handles=keys, loc="upper center", bbox_to_anchor=(0.5, 0.0),
-              ncol=4, fontsize=7, handlelength=1.6, columnspacing=1.2)
-    ax.set_aspect("equal")
-    ax.set_xlim(-0.04, 1.08)
-    ax.set_ylim(-0.04, 1.06)
-    ax.axis("off")
-    fig.tight_layout()
-    return fig
+P = T.PAL
 
 
 def voltage_profile(res, vmin, vmax):
@@ -182,20 +18,20 @@ def voltage_profile(res, vmin, vmax):
     v = res["V (pu)"].to_numpy(dtype=float)
     lo = min(vmin, v.min()) - 0.015
     hi = max(vmax, v.max()) + 0.025
-    fig, ax = plt.subplots(figsize=(7, 2.6))
+    fig, ax = plt.subplots(figsize=(7, 3.0))
     ax.bar(x, v - lo, bottom=lo, width=0.6, zorder=2,
-           color=[P["red"] if (y < vmin or y > vmax) else P["accent"]
+           color=[P["red"] if (y < vmin or y > vmax) else P["c1"]
                   for y in v])
-    for lim, name in ((vmax, "Vmax"), (vmin, "Vmin")):
+    for lim, name, va in ((vmax, "Vmax", "bottom"), (vmin, "Vmin", "top")):
         ax.axhline(lim, color=P["red"], linestyle="--", lw=1, zorder=3)
-        ax.text(x.max() + 0.45, lim, f" {name} {lim:.2f}", color=P["red"],
-                fontsize=8, va="center")
+        ax.text(x.max() + 1.45, lim, f"{name} {lim:.2f} ", color=P["red"],
+                fontsize=7.5, ha="right", va=va, zorder=4)
     ax.set_xticks(x.astype(int))
-    ax.set_xlim(x.min() - 0.6, x.max() + 0.6)
+    ax.set_xlim(x.min() - 0.6, x.max() + 1.5)
     ax.set_ylim(lo, hi)
     ax.set_xlabel("Bus")
     ax.set_ylabel("|V| (pu)")
-    ax.grid(axis="y", color=P["plot_grid"], lw=0.7, zorder=0)
+    ax.grid(axis="y", color=P["grid"], lw=0.7, zorder=0)
     fig.tight_layout()
     return fig
 
@@ -207,15 +43,15 @@ def convergence_history(hist):
     it = np.arange(1, len(h))
     y = h[1:]
     keep = np.isfinite(y) & (y > 0)
-    fig, ax = plt.subplots(figsize=(5.5, 3.0))
+    fig, ax = plt.subplots(figsize=(7, 3.0))
     if keep.any():
-        ax.semilogy(it[keep], y[keep], color=P["accent"], lw=1.8, marker="o",
+        ax.semilogy(it[keep], y[keep], color=P["c1"], lw=1.8, marker="o",
                     ms=3.5)
     ax.set_xlim(0.5, max(len(h) - 0.5, 1.5))
     ax.set_xticks(np.arange(1, max(len(h), 2)).astype(int))
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Max mismatch (pu)")
-    ax.grid(color=P["plot_grid"], lw=0.7)
+    ax.grid(color=P["grid"], lw=0.7)
     fig.tight_layout()
     return fig
 
@@ -225,24 +61,30 @@ def fault_voltages(v_pu, vmin, vmax):
     plt = T.mpl_style()
     x = v_pu.index.to_numpy(dtype=float)
     y = v_pu.to_numpy(dtype=float)
-    fig, ax = plt.subplots(figsize=(7, 2.6))
-    ax.bar(x, y, width=0.6, color=P["accent"], zorder=2)
-    ax.axhline(vmin, color=P["red"], linestyle="--", lw=1, zorder=3)
-    ax.text(x.max() + 0.45, vmin, f" Vmin {vmin:.2f}", color=P["red"],
-            fontsize=8, va="center")
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    ax.bar(x, y, width=0.6, color=P["c1"], zorder=2)
+    top = max(y.max() * 1.15, 0.05)
+    if vmin <= top:     # limit line only when the data reaches near it
+        ax.axhline(vmin, color=P["red"], linestyle="--", lw=1, zorder=3)
+        ax.text(x.max() + 1.45, vmin, f"Vmin {vmin:.2f} ", color=P["red"],
+                fontsize=7.5, ha="right", va="bottom", zorder=4)
+    for xi, yi in zip(x, y):   # the faulted bus collapses to ~0 pu
+        if yi < top * 0.02:
+            ax.text(xi, top * 0.02, "fault", ha="center", va="bottom",
+                    fontsize=7.5, color=P["red"], zorder=4)
     ax.set_xticks(x.astype(int))
-    ax.set_xlim(x.min() - 0.6, x.max() + 0.6)
-    ax.set_ylim(0, max(y.max() * 1.08, 0.1))
+    ax.set_xlim(x.min() - 0.6, x.max() + 1.5)
+    ax.set_ylim(0, top)
     ax.set_xlabel("Bus")
     ax.set_ylabel("Post-fault |V| (pu)")
-    ax.grid(axis="y", color=P["plot_grid"], lw=0.7, zorder=0)
+    ax.grid(axis="y", color=P["grid"], lw=0.7, zorder=0)
     fig.tight_layout()
     return fig
 
 
 def pv_curves(pv, lam_max, vmin, highlight=3):
     """P-V (nose) curves: |V| vs load multiplier; the weakest buses in
-    accent/red, the rest light grey, base case and last solvable point marked."""
+    red/cyan, the rest dim grey, base case and last solvable point marked."""
     plt = T.mpl_style()
     lam = pv["lambda"].to_numpy(dtype=float)
     V = pv.drop(columns="lambda")
@@ -250,19 +92,19 @@ def pv_curves(pv, lam_max, vmin, highlight=3):
     fig, ax = plt.subplots(figsize=(7, 3.0))
     for c in V.columns:
         if c not in weak:
-            ax.plot(lam, V[c], color=P["plot_grid"], lw=1.2, zorder=1)
-    for c, col in zip(weak, (P["red"], P["accent"], P["muted"])):
+            ax.plot(lam, V[c], color=P["axis"], lw=1.2, zorder=1)
+    for c, col in zip(weak, (P["red"], P["c1"], P["text"])):
         ax.plot(lam, V[c], color=col, lw=1.9, label=c, zorder=3)
-    ax.axvline(1.0, color=P["muted"], lw=0.9, ls=":", zorder=2)
+    ax.axvline(1.0, color=P["text"], lw=0.9, ls=":", zorder=2)
     ax.text(1.0, ax.get_ylim()[1], " base case", fontsize=8, va="top",
-            color=P["muted"])
+            color=P["text"])
     ax.axvline(lam_max, color=P["red"], lw=0.9, ls="--", zorder=2)
     ax.text(lam_max, ax.get_ylim()[0], f"\u03bb max {lam_max:.2f} ",
             fontsize=8, ha="right", va="bottom", color=P["red"])
     ax.axhline(vmin, color=P["red"], lw=0.8, ls=(0, (2, 3)), alpha=0.6)
     ax.set_xlabel("Load multiplier \u03bb (all loads and generation)")
     ax.set_ylabel("|V| (pu)")
-    ax.grid(color=P["plot_grid"], lw=0.7)
+    ax.grid(color=P["grid"], lw=0.7)
     ax.legend(loc="lower left", fontsize=8)
     fig.tight_layout()
     return fig

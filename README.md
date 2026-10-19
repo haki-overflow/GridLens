@@ -17,24 +17,27 @@ A Python tool that solves an N-bus power system and turns the results into somet
 - Three sidebar modes (Quick, Standard, Advanced) so nobody has to fill every field; untouched settings fall back to defaults.
 - Grid data loads three ways: preset case, uploaded bus/line CSV pair (blank templates included), or direct table edits.
 - Optional columns: transformer taps (`Tap`) and bus shunts (`Bs`) appear only when ticked; `Tap = 1`, `Bs = 0` and missing `B` are filled automatically before solving.
-- Opt-in studies: N-1 contingency, method comparison, short circuit and AI report — only the ticked studies run and get tabs.
+- Every study runs on **Run study** and has its own page (Dashboard, Network diagram, Solver check, Contingency N-1, PV analysis, Fault levels, Study report), each with its own URL and an "Open in new tab" link. Results are cached, so a page opened in a new browser tab shows the last solved study without re-running.
+- Interactive one-line diagram (Plotly): wheel zoom, drag pan, hover for P/Q/S per line and per bus, click a bus or line to inspect it; optional flow, angle, load, generator and breaker layers. Optional bus columns `x`, `y` override the layout.
 - Pre-solve validation with friendly, specific errors (slack count, lines to missing buses, `X = 0`, disconnected network, bad numbers).
-- Exports: CSV downloads for bus results, line flows, N-1 and fault tables, a ZIP of all matplotlib figures as PNG, and the current input tables.
+- Export: the Study report page downloads the generated report as Markdown.
 
 ## Project structure
 
 ```
 CAPSA/
-├── app.py                 Streamlit GUI: modes, dynamic inputs, validation, result tabs, exports
-├── ui_theme.py            control-room palette, CSS injection (banner/badges/cards), matplotlib style
+├── app.py                 Streamlit GUI: pages, modes, dynamic inputs, validation, cached studies
+├── theme.css              the dark palette and all styling as CSS variables
+├── ui_theme.py            loads theme.css: palette, CSS injection, banner/badges/status bar, matplotlib + Plotly style
+├── oneline.py             interactive single-line diagram (Plotly): layout, routing, hover, inspector data
 ├── solver.py              METHODS, build_ybus, injections, the three solvers, solve_loadflow
-├── cases.py               _bus/_lines helpers and the CASES presets
+├── cases.py               _bus/_lines helpers, the CASES presets and their diagram COORDS
 ├── studies.py             contingency (N-1), outage, pv_curve, fault_analysis (3-phase via Zbus)
-├── plotting.py            draw_network plus voltage-profile / convergence / post-fault figures
+├── plotting.py            voltage-profile / convergence / P-V / post-fault figures (matplotlib)
 ├── ai_report.py           LMSTUDIO_URL, lm_models, ai_report (local Gemma via LM Studio)
 ├── check_refactor.py      asserts the split modules match power_flow_methods.py exactly
 ├── power_flow_methods.py  the original single-file version, kept as the comparison baseline
-├── requirements.txt       numpy, pandas, matplotlib, streamlit, requests, pytest
+├── requirements.txt       numpy, pandas, matplotlib, plotly, streamlit, requests, pytest
 ├── run.sh                 convenience wrapper around streamlit run app.py
 ├── AGENTS.md              contributor notes and conventions
 └── venv/                  local virtual environment (managed with uv)
@@ -42,14 +45,14 @@ CAPSA/
 
 ## Execution flow
 
-1. `streamlit run app.py` imports the modules and calls `main()` in `app.py`; `ui_theme.inject()` applies the dark control-room CSS and the GridLens banner.
-2. The sidebar mode selector stages the inputs: **Quick** shows only the case source (preset or CSV upload) and study checkboxes; **Standard** adds the method, Base MVA and voltage limits; **Advanced** adds the transformer-tap and shunt-columns toggles and the solver tolerance. Every input carries a `help=` tooltip with its unit.
+1. `streamlit run app.py` imports the modules and calls `main()` in `app.py`; `ui_theme.inject()` applies the dark theme CSS and the matplotlib/Plotly styles; `st.navigation` builds the page list; the banner and status bar render on every page.
+2. The sidebar mode selector stages the inputs: **Quick** shows only the case source (preset or CSV upload); **Standard** adds the method, Base MVA and voltage limits; **Advanced** adds the transformer-tap and shunt-columns toggles and the solver tolerance. Every input carries a `help=` tooltip with its unit.
 3. The bus and line tables are `st.data_editor`s over `st.session_state["bus_tbl"]` / `["lines_tbl"]`, seeded from the preset (`cases.py`), replaced by `pd.read_csv` on upload, and edited in place. Hidden `Tap`/`Bs` columns keep their data; `_prep()` fills `Tap = 1`, `Bs = 0` and missing `B` before the solver sees the tables.
-4. Pressing **Solve** validates first (`_prep` returns friendly problems for a wrong slack count, lines to missing buses, `X = 0`, disconnected networks and non-numeric cells) — on success it calls `solve_loadflow(bus, lines, method, tol)` (`solver.py`), which builds the admittance matrix with `build_ybus`, flat-starts the PQ voltages, dispatches to `newton_raphson`, `fast_decoupled` or `gauss_seidel`, then computes bus injections and per-line flows, returning `(res, flows, ok, hist)`.
-5. Only the ticked studies run on the same click: the method-comparison loop over all three methods and `contingency(bus, lines, vmin, vmax)` (`studies.py`). Results and a summary string (bus table, load and loss in MW, voltage limits, worst three outages when N-1 ran) are stored in `st.session_state["out"]`.
-6. The top strip renders status badges (CONVERGED/DIVERGED, N-1 SECURE/VIOLATIONS) and six metric cards (slack injection, generation, load, losses, min/max voltage). The tabs render: load-flow tables and the voltage-profile/convergence figures; the network diagram from `draw_network(res, lines, vmin, vmax, flows)` (`plotting.py`); the comparison and N-1 tables; the short-circuit tab calls `fault_analysis(bus, lines, res, xd, zf, base, kv)` (`studies.py`) with its own Xd'', Zf and base-kV inputs and plots post-fault voltages; the AI-report tab lists LM Studio models.
-7. In the AI report tab, `lm_models()` (`ai_report.py`) lists the models loaded in LM Studio. **Generate report** calls `ai_report(summary, model)`, which posts the summary to the LM Studio chat endpoint; the model phrases the numbers, it does not compute them.
-8. The Export tab provides CSV downloads (bus results, line flows, N-1, fault table — disabled unless that study ran), the current input tables, and `gridlens_figures.zip` bundling every matplotlib figure as PNG (`_fig_zip` in `app.py`).
+4. Pressing **Run study** (Dashboard, below the case tables) validates first (`_prep` returns friendly problems for a wrong slack count, lines to missing buses, `X = 0`, disconnected networks and non-numeric cells) — on success it calls `solve_loadflow(bus, lines, method, tol)` (`solver.py`), which builds the admittance matrix with `build_ybus`, flat-starts the PQ voltages, dispatches to `newton_raphson`, `fast_decoupled` or `gauss_seidel`, then computes bus injections and per-line flows, returning `(res, flows, ok, hist)`.
+5. All studies run on the same click inside `_study()` (cached with `st.cache_data` on the case and settings): the method-comparison loop, `contingency(bus, lines, vmin, vmax)` and `pv_curve` (`studies.py`). Results and a summary string are stored in `st.session_state["out"]`, and the last solved inputs in a server-wide `st.cache_resource` store so a new browser tab restores them.
+6. The Dashboard renders status badges, six metric cards and the bus/branch tables with the voltage-profile/convergence figures. The Network diagram page draws `oneline.figure(...)` with an inspector panel; the Solver check and N-1 pages show their tables (the N-1 explorer redraws the diagram with the line tripped); the Fault levels page calls `fault_analysis(bus, lines, res, xd, zf, base, kv)` (`studies.py`) with its own Xd'', Zf and base-kV inputs and plots post-fault voltages; the Study report page lists LM Studio models.
+7. On the Study report page, `lm_models()` (`ai_report.py`) lists the models loaded in LM Studio. **Generate report** calls `ai_report(summary, model)`, which posts the summary to the LM Studio chat endpoint; the model phrases the numbers, it does not compute them.
+8. The Study report page has a single **Download study report** button (Markdown), disabled until a report exists.
 
 ```mermaid
 flowchart TD
@@ -63,12 +66,12 @@ flowchart TD
     D --> I["studies.contingency: re-solve every N-1 outage"]
     I --> E
     D --> J["method comparison: all three methods"]
-    H --> K["plotting.draw_network"]
+    H --> K["oneline.figure (Plotly)"]
     H --> L["studies.fault_analysis via Zbus"]
     H --> M["summary string"]
     I --> M
     M --> N["ai_report.ai_report on Generate report"]
-    N --> O["Gemma text shown in the AI report tab"]
+    N --> O["Gemma text shown on the Study report page"]
 ```
 
 ## Where to look when debugging
@@ -79,10 +82,11 @@ flowchart TD
 | Convergence flag or iteration counts look off | `solver.py` (convergence history handling) |
 | N-1 table wrong or full of FAILED rows | `studies.py` (`contingency`) |
 | Fault currents or kA numbers wrong | `studies.py` (`fault_analysis`), base kV input in `app.py` |
-| Diagram or voltage colours broken | `plotting.py` (`draw_network`, profile/history/fault figures) |
-| Theme, banner, badges or metric cards look wrong | `ui_theme.py` (`inject`, `mpl_dark`), `.streamlit/config.toml` |
+| One-line diagram layout, hover or click broken | `oneline.py` (`layout`, `figure`, `inspect`), `cases.COORDS` |
+| Profile / history / P-V / fault figures broken | `plotting.py` |
+| Theme, banner, badges or metric cards look wrong | `theme.css`, `ui_theme.py` (`inject`, `mpl_style`, `plotly_style`), `.streamlit/config.toml` |
 | Report fails, or no models listed | `ai_report.py` (`lm_models`, `ai_report`); check LM Studio on port 1234 |
-| Layout, editors or tab content misbehave | `app.py` (`main`) |
+| Pages, editors or cached results misbehave | `app.py` (`main`, `_page`, `_study`) |
 
 ## Setup and run
 
@@ -136,4 +140,4 @@ Results: `res` has `Bus`, `V (pu)`, `Angle (deg)`, `P_inj`, `Q_inj`; `flows` has
 
 ## License and credits
 
-Placeholder: license TBD. Built with numpy, pandas, matplotlib and streamlit, with the AI report generated by a local Gemma model via LM Studio.
+Placeholder: license TBD. Built with numpy, pandas, matplotlib, plotly and streamlit, with the AI report generated by a local Gemma model via LM Studio.

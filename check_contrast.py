@@ -1,7 +1,7 @@
 """WCAG AA contrast check for the GridLens palette.
 
-Checks every text/background pair in ui_theme.CONTRAST_PAIRS for both the
-light and the dark palette and exits non-zero if any pair is below 4.5:1.
+Checks every text/background pair in ui_theme.CONTRAST_PAIRS for the
+palette and exits non-zero if any pair is below 4.5:1.
 
 Run:  venv/bin/python check_contrast.py
 """
@@ -45,7 +45,7 @@ def main():
         for name, label, ratio in failed:
             print(f"FAIL: [{name}] {label}: {ratio:.2f}:1 < {MIN_RATIO}:1")
         return 1
-    print(f"PASS: every pair meets WCAG AA ({MIN_RATIO}:1) in both palettes.")
+    print(f"PASS: every pair meets WCAG AA ({MIN_RATIO}:1).")
     return 0
 
 

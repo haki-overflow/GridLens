@@ -1,49 +1,28 @@
-# GridLens theme: planning-tool look (control-room header, grey work area).
-# One accent (muted blue); status colours only for status.
-# The in-app "Dark theme" toggle (ui_theme) restyles surfaces; these values
-# are the light palette and stay the base Streamlit theme.
+# GridLens base theme: KiCad-style dark. theme.css (injected by ui_theme.py)
+# does the detailed styling with the same palette.
 [theme]
-base = "light"
-primaryColor = "#0B4F8A"
-backgroundColor = "#F3F5F7"
-secondaryBackgroundColor = "#F5F7FA"
-textColor = "#1F2933"
-linkColor = "#1F4E8C"
-linkUnderline = false
-borderColor = "#D5DAE1"
-codeBackgroundColor = "#F5F7FA"
-codeTextColor = "#1F2933"
-font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
-headingFont = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
-baseFontSize = 14
-baseRadius = "4px"
-buttonRadius = "4px"
+base = "dark"
+primaryColor = "#8A9099"
+backgroundColor = "#33363C"
+secondaryBackgroundColor = "#3B3F45"
+textColor = "#C8CCD0"
+font = "sans serif"
+baseFontSize = 13
+baseRadius = "2px"
+buttonRadius = "2px"
 showWidgetBorder = true
 showSidebarBorder = true
-headingFontSizes = ["22px", "18px", "16px", "15px", "14px", "13px"]
+borderColor = "#575C64"
+dataframeHeaderBackgroundColor = "#464A51"
+dataframeBorderColor = "#575C64"
+headingFontSizes = ["16px", "14px", "13px", "13px", "12px", "12px"]
 headingFontWeights = [600, 600, 600, 600, 600, 600]
-metricValueFontSize = "1.4rem"
-metricValueFontWeight = 600
-dataframeHeaderBackgroundColor = "#F5F7FA"
-dataframeHeaderTextColor = "#52606D"
-dataframeBorderColor = "#D5DAE1"
-redColor = "#B3261E"
-orangeColor = "#B26A00"
-yellowColor = "#B26A00"
-greenColor = "#2E7D32"
-blueColor = "#1F4E8C"
-violetColor = "#1F4E8C"
-grayColor = "#52606D"
-chartCategoricalColors = ["#1F4E8C", "#52606D", "#8A929E", "#1F2933", "#B8C0CA", "#6B7480", "#D5DAE1"]
 
 [theme.sidebar]
-backgroundColor = "#F0F3F7"
-secondaryBackgroundColor = "#F5F7FA"
-textColor = "#1F2933"
-borderColor = "#D5DAE1"
-primaryColor = "#0B4F8A"
-linkColor = "#1F4E8C"
-codeBackgroundColor = "#F5F7FA"
+backgroundColor = "#373A40"
+secondaryBackgroundColor = "#3B3F45"
+textColor = "#C8CCD0"
+borderColor = "#575C64"
 
 [client]
 toolbarMode = "minimal"

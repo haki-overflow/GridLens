@@ -37,3 +37,14 @@ CASES = {
                 [9, 14, .12711, .27038, 0, 1], [10, 11, .08205, .19207, 0, 1],
                 [12, 13, .22092, .19988, 0, 1], [13, 14, .17093, .34802, 0, 1]])),
 }
+
+# One-line diagram coordinates per preset (diagram units, y grows downward):
+# hand-placed after the usual IEEE 14-bus drawing (generators on top, the
+# 6/9 transformer area in the middle, the 13.8 kV buses below) so every
+# branch is a straight drop or one elbow. Cases without an entry use the
+# automatic layered layout.
+COORDS = {
+    "IEEE 14-bus": [(2.5, 0), (9, 0), (16.5, 0), (13.5, 5), (5, 5),
+                    (1.5, 10), (12.5, 10), (7.2, 10), (19, 10), (20, 15),
+                    (4, 15), (-5.5, 10), (-2, 15), (-1.5, 20)],
+}

@@ -83,8 +83,37 @@ export function matrix(M: unknown[][], labels: string[]): HTMLElement {
   return t;
 }
 
+/** Plain-words meanings for the jargon, shown as "?" tooltips. One table. */
+export const GLOSSARY: Record<string, string> = {
+  "per unit": "pu: a value divided by its base (here the base MVA and base kV), so 1.00 pu is nominal.",
+  "pu": "Per unit: a value divided by its base, so 1.00 is nominal.",
+  "load flow": "Solves the voltage at every bus so generation, load and losses balance.",
+  "N-1": "Security check: remove one line at a time and see if the grid still stays within limits.",
+  "PV curve": "Increase all load step by step until the case stops solving; shows how much headroom there is.",
+  "Ybus": "Admittance matrix: describes how every bus connects to the others.",
+  "SLG": "Single line-to-ground fault.",
+  "LL": "Line-to-line fault.",
+  "DLG": "Double line-to-ground fault.",
+  "3-phase": "Balanced fault on all three phases: the usual worst-case fault current.",
+  "slack": "The reference bus: fixes the voltage angle and absorbs the power mismatch.",
+  "Newton-Raphson": "The standard load-flow method: fast and reliable.",
+};
+
+export function term(text: string): HTMLElement {
+  const s = h("span", "gloss", "?");
+  s.title = GLOSSARY[text] ?? "";
+  return s;
+}
+
 export function title(el: HTMLElement, text: string, cap: string): void {
-  el.append(h("h2", "", text), h("p", "cap", cap));
+  const hd = h("h2", "", text);
+  for (const k of Object.keys(GLOSSARY)) {
+    if (new RegExp(`(^|[^A-Za-z])${k.replace(/[-+]/g, "\\$&")}([^A-Za-z]|$)`).test(`${text} ${cap}`)) {
+      hd.append(term(k));
+      break;
+    }
+  }
+  el.append(hd, h("p", "cap", cap));
 }
 
 export function section(text: string): HTMLElement {

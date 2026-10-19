@@ -11,20 +11,20 @@ import { NEED_RUN, cards, csv, download, field, fmt, h, headline, matrix, notice
 // hash routes (#/doc/<id>).
 
 export const DOC_TITLES: Record<string, string> = {
-  canvas: "One-line diagram",
-  "load-flow": "Load flow",
-  "solver-check": "Solver check",
-  contingency: "Contingency N-1",
-  "pv-analysis": "PV analysis",
-  "fault-levels": "Fault levels",
-  faults: "Unsymmetrical faults",
-  ybus: "Ybus matrix",
+  canvas: "Network diagram",
+  "load-flow": "Load flow results",
+  "solver-check": "Do the 3 methods agree?",
+  contingency: "If a line fails (N-1)",
+  "pv-analysis": "How much more load? (PV curve)",
+  "fault-levels": "Quick short circuit (3-phase)",
+  faults: "Detailed short circuit (SLG, LL, DLG)",
+  ybus: "Admittance matrix (Ybus)",
   iterations: "Iterations",
   answer: "Worked answer",
   symmetrical: "Symmetrical components",
   line: "Line parameters",
   dispatch: "Economic dispatch",
-  report: "Study report",
+  report: "Report and download",
 };
 
 type Mount = (el: HTMLElement) => void;
@@ -136,7 +136,7 @@ const caseBody = (c: CaseData) => ({ name: c.name, bus: c.bus, lines: c.lines, s
 const n = (x: unknown) => (typeof x === "number" ? x : NaN);
 
 // ---------------------------------------------------------------- load flow
-resultsDoc("load-flow", "Load flow", "Bus voltages, generation, line flows and losses.",
+resultsDoc("load-flow", "Load flow results", "Bus voltages, generation, line flows and losses.",
   (el, r) => {
     const V = r.res.map((x) => n(x["V (pu)"]));
     const lo = Math.min(...V), hi = Math.max(...V);
@@ -168,7 +168,7 @@ resultsDoc("load-flow", "Load flow", "Bus voltages, generation, line flows and l
   });
 
 // -------------------------------------------------------------- solver check
-resultsDoc("solver-check", "Solver check", "The same case through all three load-flow methods.",
+resultsDoc("solver-check", "Do the 3 methods agree?", "The same case through all three load-flow methods.",
   (el, r) => {
     const ok = r.cmp.every((x) => x.Converged);
     el.append(headline(ok ? "All three methods converge to the same answer."
@@ -176,7 +176,7 @@ resultsDoc("solver-check", "Solver check", "The same case through all three load
   });
 
 // --------------------------------------------------------------- contingency
-resultsDoc("contingency", "Contingency N-1", "Each line removed in turn, case re-solved, ranked worst first.",
+resultsDoc("contingency", "If a line fails (N-1)", "Each line removed in turn, case re-solved, ranked worst first.",
   (el, r) => {
     const bad = r.n1.filter((x) => x.Status !== "OK" || n(x.Violations) > 0);
     const w = r.n1[0];
@@ -202,7 +202,7 @@ resultsDoc("contingency", "Contingency N-1", "Each line removed in turn, case re
   });
 
 // --------------------------------------------------------------- PV analysis
-resultsDoc("pv-analysis", "PV analysis", "Loads and generation scaled by λ until the case stops solving.",
+resultsDoc("pv-analysis", "How much more load? (PV curve)", "Loads and generation scaled by λ until the case stops solving.",
   (el, r) => {
     const lam = r.pv.lambda_max;
     const curve = r.pv.curve;
@@ -232,7 +232,7 @@ resultsDoc("pv-analysis", "PV analysis", "Loads and generation scaled by λ unti
   });
 
 // -------------------------------------------------------------- fault levels
-apiDoc("fault-levels", "Fault levels", "Three-phase fault current at every bus from the Zbus.",
+apiDoc("fault-levels", "Quick short circuit (3-phase)", "Three-phase fault current at every bus from the Zbus.",
   (row, refresh) => {
     const xd = numIn(0.2), zf = numIn(0), kv = numIn(33);
     row.append(field("Generator Xd'' (pu)", xd), field("Fault Zf (pu)", zf), field("Base kV", kv));
@@ -250,7 +250,7 @@ apiDoc("fault-levels", "Fault levels", "Three-phase fault current at every bus f
   });
 
 // ----------------------------------------------------- unsymmetrical faults
-apiDoc("faults", "Unsymmetrical faults", "SLG, LL, DLG and three-phase faults from sequence networks.",
+apiDoc("faults", "Detailed short circuit (SLG, LL, DLG)", "SLG, LL, DLG and three-phase faults from sequence networks.",
   (row, refresh, c) => {
     const kind = selectIn(["3-phase", "SLG", "LL", "DLG"], "SLG");
     const bus = selectIn(c.bus.map((_, i) => String(i + 1)), "1");
@@ -285,7 +285,7 @@ apiDoc("faults", "Unsymmetrical faults", "SLG, LL, DLG and three-phase faults fr
   });
 
 // ---------------------------------------------------------------------- ybus
-apiDoc("ybus", "Ybus matrix", "The bus admittance matrix and the terms that form each element.",
+apiDoc("ybus", "Admittance matrix (Ybus)", "The bus admittance matrix and the terms that form each element.",
   () => () => ({}), "/api/ybus", (el, d, c) => {
     const labels = c.bus.map((_, i) => String(i + 1));
     const [p1, p2] = subtabs(el, ["Matrix (polar, pu)", "How each element is formed"], "yb");
@@ -359,7 +359,7 @@ apiDoc("answer", "Worked answer", "The solution written out as text, ready to co
   });
 
 // ---------------------------------------------------------------------- report
-resultsDoc("report", "Study report", "The solver's summary, an optional plain-English write-up, and the results as files.",
+resultsDoc("report", "Report and download", "The solver's summary, an optional plain-English write-up, and the results as files.",
   (el, r) => {
     const pre = h("pre", "answer", r.summary);
     const exp = h("div", "inputs");

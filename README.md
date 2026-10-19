@@ -213,3 +213,6 @@ cd web && npm run dev       # front-end dev server (proxies /api to :8000)
 - **Textbook input:** the Textbook button opens a 5-step wizard (system base, buses, lines, transformers, per-unit review) and loads the result as the project; the Worked answer then includes the conversion.
 - **Study report:** download the results as a ZIP of CSVs; optional plain-English write-up from LM Studio (the model only rephrases the solver's numbers).
 - **Checks:** `python -m pytest`; `python tools/sync_tokens.py --check` (the web colours must equal `theme.css`); `python tools/shots.py` screenshots every document at 1366x768 and reports any page that scrolls (set `CHROME=` if Playwright cannot find a browser).
+
+## v1.4: simpler navigation
+The workspace now opens on a Start screen (example, textbook data, or file) and a six-step workflow list replaces the long project tree. Same solver and numbers as v1.3. Check it with `python tools/walkthrough.py`.

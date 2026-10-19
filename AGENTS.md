@@ -110,9 +110,11 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - In-app report: local Gemma through LM Studio (OpenAI-compatible API).
 - `opencode.json` is optional and only configures opencode itself. The app does not read it.
 
-## Workspace UI (v1.3)
+## Workspace UI (v1.4)
 - `api/server.py` + `api/schema.py`: JSON endpoints over the existing modules (no maths in the API). `gridcore.py` holds the pure `prep_case`, `run_study`, `outage` that both the Streamlit app and the API call.
-- `web/src/` (Vite + TypeScript + D3, no framework), 8 files in import order: `ui.ts` (DOM helpers, tables, icons, zip) -> `app.ts` (API, busy bar, router, project state in localStorage, actions) -> `charts.ts` (stackedPlot, phasorDiagram) -> `documents.ts` (document registry, study views, textbook wizard) -> `canvas.ts` (D3 diagram, layout from `/api/layout`) -> `panels.ts` (project tree, property grid, output tabs) -> `shell.ts` (layout, splitters, tabs, toolbar, title/status bar) -> `main.ts` (entry). Lower files never import higher ones (no cycles).
+- `web/src/` (Vite + TypeScript + D3, no framework), 8 files in import order: `ui.ts` (DOM helpers, tables, icons, zip) -> `app.ts` (API, busy bar, router, project state in localStorage, actions) -> `charts.ts` (stackedPlot, phasorDiagram) -> `documents.ts` (document registry, study views, textbook wizard) -> `canvas.ts` (D3 diagram, layout from `/api/layout`) -> `panels.ts` (workflow list, property grid with Edit picker, collapsed message log) -> `shell.ts` (layout, splitters, tabs, toolbar, title/status bar) -> `main.ts` (entry). Lower files never import higher ones (no cycles).
 - Colours come only from `web/src/tokens.css`, a copy of the `:root` block in `theme.css`; edit `theme.css` and run `python tools/sync_tokens.py` (a test fails if they differ).
 - Bar positions are stored as bus columns `x`, `y` in raw diagram units that are never all whole numbers (`figures._xy_columns` reads whole numbers as grid cells). They are not part of the staleness check.
 - No calculation code lives in `web/`: every number comes from the API.
+- v1.4 navigation: six views (Network, Solve, Safety check, Short circuit, Show working, Tools) defined in `VIEWS` in `app.ts`, each with sub-tabs; routes are `#/view/sub` (old `#/doc/<id>` still works). A Start screen shows until an example/file/textbook case is chosen. Diagram options (Fit/Grid/Flows/Angles) sit on the diagram; File menu holds open/save/export. Jargon tooltips come from `GLOSSARY` in `ui.ts`.
+- `python tools/walkthrough.py` (workspace running) walks every view like a new user and fails on console errors or page scroll.

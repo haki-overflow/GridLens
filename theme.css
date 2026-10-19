@@ -55,7 +55,7 @@ html, body, .stApp { background: var(--bg); color: var(--text);
 .stApp p, .stApp label, .stApp li, [data-testid="stWidgetLabel"] p {
   color: var(--text); font-size: var(--fs); }
 /* top navigation bar: page groups as dropdowns, above the title band */
-[data-testid="stHeader"] { background: var(--hdr); height: 46px; min-height: 46px;
+[data-testid="stHeader"] { background: var(--bg); height: 46px; min-height: 46px;
   border-bottom: 1px solid var(--border); }
 [data-testid="stHeader"] a, [data-testid="stHeader"] button,
 [data-testid="stHeader"] [data-testid="stTopNavLink"] { text-decoration: none;
@@ -217,7 +217,7 @@ code, pre, kbd, [data-testid="stMarkdownContainer"] code {
 [data-testid="stPopover"] button, [data-testid="stPopoverButton"] {
   border-radius: var(--radius) !important; box-shadow: none !important;
   font-weight: 400; min-height: var(--ctl-h); padding: 1px 12px;
-  transition: none !important; background: var(--hdr) !important;
+  background: var(--hdr) !important;
   border: 1px solid var(--border) !important; color: var(--text) !important; }
 .stButton button p, .stDownloadButton button p, .stLinkButton a p {
   font-size: var(--fs) !important; color: var(--text) !important; }
@@ -363,3 +363,20 @@ code, pre, kbd, [data-testid="stMarkdownContainer"] code {
 [data-testid="stNumberInputStepDown"], [data-testid="stNumberInputStepUp"] {
   display: none !important; }
 [data-testid="stMain"] [data-testid="stNumberInput"] { max-width: 220px; }
+
+/* --- smoother reruns: no dimming, short fade-in, short colour transitions ----------- */
+[data-stale="true"] { opacity: 1 !important; transition: none !important; }
+@keyframes gl-fade { from { opacity: 0; } to { opacity: 1; } }
+[data-testid="stMainBlockContainer"] { animation: gl-fade 120ms ease-out; }
+.stButton button, .stDownloadButton button, .stLinkButton a,
+[data-testid="stPopoverButton"], button[role="tab"],
+[data-testid="stSidebarNavLink"], [data-testid="stTopNavLink"],
+[data-testid="stTopNavSection"], [data-testid="stButtonGroup"] button[data-variant] {
+  transition: background-color 120ms, border-color 120ms, color 120ms !important; }
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="stMainBlockContainer"] { animation: none; }
+  .stButton button, .stDownloadButton button, .stLinkButton a,
+  [data-testid="stPopoverButton"], button[role="tab"],
+  [data-testid="stSidebarNavLink"], [data-testid="stTopNavLink"],
+  [data-testid="stTopNavSection"], [data-testid="stButtonGroup"] button[data-variant] {
+    transition: none !important; } }

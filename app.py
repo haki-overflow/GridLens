@@ -669,7 +669,7 @@ def _tab_network(out):
     sel = st.session_state.get("net_sel")
     left, right = st.columns([4, 1], gap="small")
     with left:
-        ev = _diagram(out, "net_chart", 760, show=show, selected=sel,
+        ev = _diagram(out, "net_chart", 460, show=show, selected=sel,
                       on_select="rerun")
     pts = (ev or {}).get("selection", {}).get("points", []) if ev else []
     if pts and pts[0].get("customdata"):

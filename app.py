@@ -11,12 +11,9 @@ import pandas as pd
 import streamlit as st
 
 import gridcore
-import ui_problem
-import ui_theme
-import ui_topics
-import ui_working
 from ai_report import ai_report, lm_models
 import figures
+import ui
 from cases import CASES, COORDS
 from figures import (convergence_history, fault_voltages,
                       pv_curves, voltage_profile)
@@ -226,9 +223,8 @@ def _sidebar():
                 st.download_button(name, data=body.encode(), file_name=name,
                                    mime="text/csv", key=f"tpl_{name}")
 
-        st.link_button("Open workspace (new UI)", "http://localhost:8000",
-                       help="The PSCAD-style workspace. Start it with "
-                            "./run_workspace.sh.", width="stretch")
+        st.caption("[Open the workspace (new UI)](http://localhost:8000): "
+                   "start it with ./run_workspace.sh")
         if std:
             with st.expander("Study settings", expanded=False):
                 _settings(adv)
@@ -261,7 +257,7 @@ def _editors(cfg):
     box = st.expander(f"Edit case data · {nb} buses, {nl} lines",
                       expanded=False)
     left, right = box.columns([1.15, 1], gap="medium")
-    left.html(ui_theme.section("Bus data"))
+    left.html(ui.section("Bus data"))
     left.caption("Per unit. Row n is bus n. Pd/Qd are positive demand, "
                  "Pg/Qg injections; V is the setpoint (Slack/PV) or start."
                  + (" Qmin/Qmax: generator Q limits." if cfg["qlim"] else ""))
@@ -279,7 +275,7 @@ def _editors(cfg):
             "Type", options=["Slack", "PV", "PQ"],
             help="Slack: swing bus. PV: held |V|. PQ: load bus.")})
 
-    right.html(ui_theme.section("Branch data"))
+    right.html(ui.section("Branch data"))
     right.caption("From/To are bus numbers. B is total line-charging "
                   "susceptance, split B/2 at each end.")
     st.session_state["lines_tbl"] = _edit_table(
@@ -375,21 +371,21 @@ def _strip(out):
     better = "ok" if out["ok"] else "bad"
     row = st.container(horizontal=True, vertical_alignment="center")
     with row:
-        st.markdown(ui_theme.badge("Converged" if out["ok"] else "Diverged",
+        st.markdown(ui.badge("Converged" if out["ok"] else "Diverged",
                                    better), unsafe_allow_html=True)
         n1 = out["n1"]
         viol = pd.to_numeric(n1["Violations"], errors="coerce").fillna(0)
         bad = int((n1["Status"].eq("FAILED") | (viol > 0)).sum())
-        st.markdown(ui_theme.badge("N-1 secure" if not bad else
+        st.markdown(ui.badge("N-1 secure" if not bad else
                                    f"N-1: {bad} of {len(n1)} outages "
                                    "insecure", "bad" if bad else "ok"),
                     unsafe_allow_html=True)
         lam = out["pv"][1]
         tone = "ok" if lam >= 1.5 else "warn" if lam >= 1.15 else "bad"
-        st.markdown(ui_theme.badge(f"Loadability {lam:.2f}x", tone),
+        st.markdown(ui.badge(f"Loadability {lam:.2f}x", tone),
                     unsafe_allow_html=True)
         if not out["cmp"]["Converged"].all():
-            st.markdown(ui_theme.badge("Method mismatch", "warn"),
+            st.markdown(ui.badge("Method mismatch", "warn"),
                         unsafe_allow_html=True)
         st.caption(f"{out['method']} · {out['its']} iterations · "
                    f"tol {out['tol']:g} · base {out['base']:g} MVA")
@@ -477,7 +473,7 @@ def _violations(out):
         st.html('<div class="gl-ok">No voltage violations in the base case '
                 f'({out["vmin"]:.2f}\u2013{out["vmax"]:.2f} pu).</div>')
         return
-    st.html(ui_theme.section("Base-case violations"))
+    st.html(ui.section("Base-case violations"))
     for _, r in bad.iterrows():
         lim = out["vmin"] if r["V (pu)"] < out["vmin"] else out["vmax"]
         st.html(f'<div class="gl-bad">Bus {int(r["Bus"])}: '
@@ -488,7 +484,7 @@ def _violations(out):
 def _tab_loadflow(out):
     """Dashboard body: verdict first, details one click away."""
     _violations(out)
-    st.html(ui_theme.section("Details"))
+    st.html(ui.section("Details"))
     c = st.columns(4)
     if c[0].button("Bus report", width="stretch", key="d_bus"):
         _dlg_bus(out)
@@ -540,12 +536,12 @@ def _tab_network(out):
             st.rerun()
     with right:
         if sel is None:
-            st.html(ui_theme.inspector_html("Inspector", [
+            st.html(ui.inspector_html("Inspector", [
                 ("Selection", "none"), ("", "click a bus or line")]))
         else:
             title, rows = figures.inspect(out["res"], out["l"], out["flows"],
                                           out["base"], out["b"], sel)
-            st.html(ui_theme.inspector_html(title, rows))
+            st.html(ui.inspector_html(title, rows))
             if st.button("Clear selection", key="net_clear"):
                 st.session_state.pop("net_sel", None)
                 st.rerun()
@@ -691,9 +687,9 @@ def _tab_sc(out):
         return
     st.session_state["sc"] = dict(tbl=sc, Z=Z, V0=V0, If=If)
     left, right = st.columns([1, 1], gap="medium")
-    left.html(ui_theme.section("Fault levels per bus"))
+    left.html(ui.section("Fault levels per bus"))
     left.dataframe(sc.round(4), hide_index=True)
-    right.html(ui_theme.section("Post-fault voltages"))
+    right.html(ui.section("Post-fault voltages"))
     fb = right.selectbox("Fault at bus", sc["Bus"].astype(int))
     vp = abs(V0 - Z[:, fb - 1] * If[fb - 1])
     _plot(fault_voltages(pd.Series(vp, index=sc["Bus"], dtype=float),
@@ -752,19 +748,19 @@ def _load_problem(bus, lines, sbase, conversion=None):
 
 
 def _tab_problem(out):
-    ui_problem.page(_load_problem)
+    ui.page_problem(_load_problem)
 
 
 def _tab_answer(out):
     conv = st.session_state.get("prob_conv") \
         if st.session_state.get("case_src") == "problem" else None
-    ui_working.page_answer(out, conv)
+    ui.page_answer(out, conv)
 
 
 def _tab_dashboard(out):
     _strip(out)
     if out.get("qlog"):
-        st.html(ui_theme.section("Generator Q limits: bus type switching"))
+        st.html(ui.section("Generator Q limits: bus type switching"))
         st.dataframe(pd.DataFrame(out["qlog"]), hide_index=True)
     _tab_loadflow(out)
 
@@ -774,16 +770,16 @@ PAGES = {
                   ("Problem input", "problem", _tab_problem),
                   ("Network diagram", "network", _tab_network),
                   ("Solver check", "solver-check", _tab_cmp)),
-    "Worked solution": (("Ybus matrix", "ybus", ui_working.page_ybus),
-                        ("Iterations", "iterations", ui_working.page_iterations),
+    "Worked solution": (("Ybus matrix", "ybus", ui.page_ybus),
+                        ("Iterations", "iterations", ui.page_iterations),
                         ("Worked answer", "answer", _tab_answer)),
     "Studies": (("Contingency N-1", "contingency", _tab_n1),
                 ("PV analysis", "pv-analysis", _tab_pv),
                 ("Fault levels", "fault-levels", _tab_sc),
-                ("Unsymmetrical faults", "faults", ui_topics.page_seqfault),
-                ("Economic dispatch", "dispatch", ui_topics.page_dispatch)),
-    "Calculators": (("Symmetrical components", "symmetrical", ui_topics.page_symcomp),
-                    ("Line parameters", "line", ui_topics.page_tline)),
+                ("Unsymmetrical faults", "faults", ui.page_seqfault),
+                ("Economic dispatch", "dispatch", ui.page_dispatch)),
+    "Calculators": (("Symmetrical components", "symmetrical", ui.page_symcomp),
+                    ("Line parameters", "line", ui.page_tline)),
     "Report": (("Study report", "study-report", _tab_ai),),
 }
 
@@ -846,13 +842,13 @@ def main():
                         for group, pages in PAGES.items()},
                        position="top")
     _init()
-    ui_theme.inject()
+    ui.inject()
     cfg = _sidebar()
     st.session_state["cfg"] = cfg
 
     out = st.session_state.get("out")
     head = st.empty()       # filled after the page ran (its edits count)
-    st.html(ui_theme.statusbar_html(
+    st.html(ui.statusbar_html(
         [("Solver", out["method"] if out else "-"),
          ("Iterations", out["its"] if out else "-"),
          ("Tolerance", f"{out['tol']:g}" if out else "-"),
@@ -874,7 +870,7 @@ def main():
     out = st.session_state.get("out")
     sol = ("—", "") if out is None else ("STALE", "stale") if _stale(cfg) \
         else ("SOLVED" if out["ok"] else "NOT SOLVED", "")
-    head.html(ui_theme.banner_html([
+    head.html(ui.banner_html([
         ("Case", st.session_state.get("case_label") or _case_label()),
         ("Buses / branches", f"{len(st.session_state['bus_tbl'])} / "
                              f"{len(st.session_state['lines_tbl'])}"),

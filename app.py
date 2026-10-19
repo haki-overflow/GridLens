@@ -189,22 +189,23 @@ def _sidebar():
                                  "own default tolerance.")
 
         st.header("Studies")
-        st.checkbox("N-1 contingency", key="run_n1", value=True,
+        st.checkbox("Contingency N-1", key="run_n1", value=True,
                     help="Remove each line in turn, re-solve, rank by "
                          "severity and violations.")
-        st.checkbox("Method comparison", key="run_cmp", value=True,
+        st.checkbox("Solver check", key="run_cmp", value=True,
                     help="Solve with all three methods and compare "
                          "convergence, loss and minimum voltage.")
-        st.checkbox("Voltage stability", key="run_pv", value=True,
+        st.checkbox("PV analysis", key="run_pv", value=True,
                     help="P-V curve: scale all loads and generation until "
                          "the load flow no longer solves; reports the "
                          "loadability margin and the weakest buses.")
-        st.checkbox("Short circuit", key="run_sc", value=False,
+        st.checkbox("Fault levels", key="run_sc", value=False,
                     help="Three-phase fault at every bus via the Zbus "
                          "matrix (loads neglected, generators as Xd'').")
-        st.checkbox("AI report", key="run_ai", value=False,
-                    help="Local Gemma writes a plain-English summary; it "
-                         "never computes numbers, needs LM Studio running.")
+        st.checkbox("Study report", key="run_ai", value=False,
+                    help="Plain-English write-up of the results by a local "
+                         "model in LM Studio; it only rephrases the solver's "
+                         "numbers.")
 
         st.header("Appearance")
         st.toggle("Dark theme", key="dark_theme",
@@ -224,7 +225,7 @@ def _editors(cfg):
     box = st.expander(f"Case data · {nb} buses, {nl} lines",
                       expanded="out" not in st.session_state)
     left, right = box.columns([1.15, 1], gap="medium")
-    left.markdown("**Bus data**")
+    left.html(ui_theme.section("Bus data"))
     left.caption("Per unit. Row n is bus n. Pd/Qd are positive demand, "
                  "Pg/Qg injections; V is the setpoint (Slack/PV) or start.")
     bus_view = st.session_state["bus_tbl"] if cfg["shunts"] else \
@@ -237,7 +238,7 @@ def _editors(cfg):
             help="Slack: swing bus. PV: held |V|. PQ: load bus.")})
     st.session_state["bus_tbl"] = bus
 
-    right.markdown("**Line data**")
+    right.html(ui_theme.section("Branch data"))
     right.caption("From/To are bus numbers. B is total line-charging "
                   "susceptance, split B/2 at each end.")
     line_view = st.session_state["lines_tbl"] if cfg["taps"] else \
@@ -476,41 +477,49 @@ def _plot(fig, alt, where=st):
 
 
 def _tab_loadflow(out):
-    left, right = st.columns([1, 1.2], gap="large")
-    left.markdown("**Bus results**")
-    res = out["res"].copy()
-    res["Type"] = out["b"]["Type"].values
-    left.dataframe(res[["Bus", "Type", "V (pu)", "Angle (deg)", "P_inj",
-                        "Q_inj"]].round(4), hide_index=True)
-    right.markdown("**Voltage profile**")
-    _plot(voltage_profile(out["res"], out["vmin"], out["vmax"]),
+    b, res, base = out["b"], out["res"], out["base"]
+    rep = pd.DataFrame({
+        "Bus": res["Bus"], "Type": b["Type"].values,
+        "V (pu)": res["V (pu)"], "Angle (deg)": res["Angle (deg)"],
+        "P gen (MW)": (res["P_inj"] + b["Pd"].values) * base,
+        "Q gen (MVAr)": (res["Q_inj"] + b["Qd"].values) * base,
+        "P load (MW)": b["Pd"].values * base,
+        "Q load (MVAr)": b["Qd"].values * base})
+    gen = rep["Type"].ne("PQ")
+    rep.loc[~gen, ["P gen (MW)", "Q gen (MVAr)"]] = 0.0
+    rep["Status"] = np.where(rep["V (pu)"] < out["vmin"], "LOW V",
+                             np.where(rep["V (pu)"] > out["vmax"], "HIGH V",
+                                      "ok"))
+    left, right = st.columns([1.35, 1], gap="large")
+    left.html(ui_theme.section("Bus report"))
+    left.dataframe(rep.round({"V (pu)": 4, "Angle (deg)": 2, "P gen (MW)": 1,
+                              "Q gen (MVAr)": 1, "P load (MW)": 1,
+                              "Q load (MVAr)": 1}), hide_index=True)
+    right.html(ui_theme.section("Voltage profile"))
+    _plot(voltage_profile(res, out["vmin"], out["vmax"]),
           "Bus voltage profile", right)
-    left, right = st.columns([1.4, 1], gap="large")
-    left.markdown("**Line flows**")
-    fl = out["flows"].copy()
-    base = out["base"]
-    fl["P_ij (MW)"] = fl["P_ij"] * base
-    fl["Q_ij (MVAr)"] = fl["Q_ij"] * base
-    fl["Loss (MW)"] = fl["Loss_P"] * base
-    left.dataframe(
-        fl[["From", "To", "P_ij (MW)", "Q_ij (MVAr)", "Loss (MW)"]].round(2),
-        hide_index=True,
-        column_config={"P_ij (MW)": st.column_config.ProgressColumn(
-            "P_ij (MW)", format="%.1f", min_value=0,
-            max_value=float(fl["P_ij (MW)"].abs().max() or 1))}
-        if (fl["P_ij"] >= 0).all() else None)
-    right.markdown("**Convergence history**")
+    fl = out["flows"]
+    br = pd.DataFrame({
+        "From": fl["From"], "To": fl["To"],
+        "P from (MW)": fl["P_ij"] * base, "Q from (MVAr)": fl["Q_ij"] * base,
+        "P to (MW)": fl["P_ji"] * base, "Q to (MVAr)": fl["Q_ji"] * base,
+        "Loss (MW)": fl["Loss_P"] * base, "Loss (MVAr)": fl["Loss_Q"] * base})
+    left, right = st.columns([1.35, 1], gap="large")
+    left.html(ui_theme.section("Branch report"))
+    left.dataframe(br.round(2), hide_index=True)
+    right.html(ui_theme.section(f"Mismatch convergence · {out['method']}"))
     _plot(convergence_history(out["hist"]),
           f"Mismatch error per iteration, {out['method']}", right)
 
 
 def _tab_network(out):
-    st.caption("Bus circles show |V| (red outline = outside the limits); "
-               "line width follows |P_ij|; the arrow marks flow direction.")
+    st.caption("Bus bars show |V| (pu) and angle; colour is the voltage "
+               "band. ~ = generator, arrow below a bar = load. Branch labels "
+               "are MW, width follows |P|, arrows give flow direction.")
     _, mid, _ = st.columns([1, 4, 1])
     _plot(draw_network(out["res"], out["l"], out["vmin"], out["vmax"],
-                       out["flows"], base=out["base"]),
-          "Network diagram coloured by bus voltage", mid)
+                       out["flows"], base=out["base"], bus=out["b"]),
+          "One-line diagram coloured by voltage band", mid)
 
 
 def _tab_cmp(out):
@@ -523,8 +532,33 @@ def _tab_cmp(out):
 def _tab_n1(out):
     st.caption("Each line removed in turn, case re-solved (Newton-Raphson), "
                "ranked worst first.")
+    st.html(ui_theme.section("Contingency ranking"))
     st.dataframe(out["n1"], hide_index=True)
-    st.markdown("**Contingency explorer**")
+    rows = []
+    l = out["l"]
+    for _, c in out["n1"].iterrows():
+        if c["Status"] != "OK" or not c["Violations"]:
+            if c["Status"] != "OK":
+                rows.append([c["Outage"], "-", None, "-", "Islanding / no "
+                             "solution"])
+            continue
+        k = [f"{int(f)}-{int(t)}" for f, t in
+             zip(l["From"], l["To"])].index(c["Outage"])
+        r, _, _, _ = outage(out["b"], l, k)
+        for bb in str(c["Buses violating"]).split(", "):
+            vv = float(r.loc[int(bb) - 1, "V (pu)"])
+            lim = out["vmin"] if vv < out["vmin"] else out["vmax"]
+            rows.append([c["Outage"], f"Bus {bb}", round(vv, 4),
+                         f"{lim:.2f}", "Low voltage" if vv < lim else
+                         "High voltage"])
+    st.html(ui_theme.section("Limit violation report"))
+    if rows:
+        st.dataframe(pd.DataFrame(rows, columns=[
+            "Contingency", "Monitored element", "Value (pu)", "Limit (pu)",
+            "Violation"]), hide_index=True)
+    else:
+        st.caption("No post-contingency limit violations.")
+    st.html(ui_theme.section("Contingency explorer"))
     l = out["l"]
     names = [f"{int(f)}-{int(t)}" for f, t in zip(l["From"], l["To"])]
     k = st.selectbox("Trip line", range(len(l)), format_func=lambda i: names[i],
@@ -545,7 +579,7 @@ def _tab_n1(out):
         return
     left, right = st.columns([1.3, 1], gap="large")
     _plot(draw_network(r, l, out["vmin"], out["vmax"], fl, base=out["base"],
-                       tripped=k),
+                       tripped=k, bus=out["b"]),
           f"Network with line {names[k]} tripped", left)
     keep = [i for i in range(len(l)) if i != k]
     pre = out["flows"].iloc[keep].reset_index(drop=True)
@@ -640,7 +674,7 @@ def _tab_ai(out):
             st.warning("Pick or type a model id first.")
         else:
             try:
-                with st.spinner("Gemma is writing..."):
+                with st.spinner("Generating report..."):
                     st.session_state["report"] = ai_report(out["summary"], model)
             except Exception as e:
                 st.error(f"LM Studio request failed: {e} (is the server on? "
@@ -656,7 +690,7 @@ def _tab_ai(out):
 def _fig_zip(out):
     figs = [("network.png",
              draw_network(out["res"], out["l"], out["vmin"], out["vmax"],
-                          out["flows"], base=out["base"])),
+                          out["flows"], base=out["base"], bus=out["b"])),
             ("voltage_profile.png",
              voltage_profile(out["res"], out["vmin"], out["vmax"])),
             ("convergence.png", convergence_history(out["hist"]))]
@@ -683,7 +717,7 @@ def _fig_zip(out):
 
 
 def _tab_export(out):
-    st.subheader("Result tables")
+    st.html(ui_theme.section("Result tables"))
     c1, c2, c3, c4 = st.columns(4)
     c1.download_button("Bus results (CSV)", out["res"].round(6).to_csv(index=False).encode(),
                        "gridlens_bus_results.csv", "text/csv",
@@ -696,7 +730,7 @@ def _tab_export(out):
                        if out["n1"] is not None else b"",
                        "gridlens_n1.csv", "text/csv", key="dl_n1",
                        disabled=out["n1"] is None,
-                       help="Enable the N-1 study in the sidebar to fill "
+                       help="Enable Contingency N-1 in the sidebar to fill "
                             "this table.")
     sc = st.session_state.get("sc") if out.get("sc_on") else None
     c4.download_button("Fault table (CSV)",
@@ -704,13 +738,13 @@ def _tab_export(out):
                        if sc is not None else b"",
                        "gridlens_faults.csv", "text/csv", key="dl_sc",
                        disabled=sc is None,
-                       help="Enable Short circuit in the sidebar and set "
+                       help="Enable Fault levels in the sidebar and set "
                             "Xd'', Zf, base kV.")
-    st.subheader("All figures (PNG bundle)")
+    st.html(ui_theme.section("Figures (PNG bundle)"))
     st.download_button("Download figures.zip", _fig_zip(out),
                        "gridlens_figures.zip", "application/zip",
                        key="dl_zip")
-    st.subheader("Current input tables")
+    st.html(ui_theme.section("Input tables"))
     c1, c2 = st.columns(2)
     c1.download_button("Current bus table (CSV)",
                        st.session_state["bus_tbl"].to_csv(index=False).encode(),
@@ -721,17 +755,17 @@ def _tab_export(out):
 
 
 def _tabs(out):
-    tabs_def = [("Load flow", _tab_loadflow), ("Network diagram", _tab_network)]
+    tabs_def = [("Power flow", _tab_loadflow), ("One-line", _tab_network)]
     if out["cmp"] is not None:
-        tabs_def.append(("Method comparison", _tab_cmp))
+        tabs_def.append(("Solver check", _tab_cmp))
     if out["n1"] is not None:
-        tabs_def.append(("N-1 contingency", _tab_n1))
+        tabs_def.append(("Contingency N-1", _tab_n1))
     if out.get("pv") is not None:
-        tabs_def.append(("Voltage stability", _tab_pv))
+        tabs_def.append(("PV analysis", _tab_pv))
     if out.get("sc_on"):
-        tabs_def.append(("Short circuit", _tab_sc))
+        tabs_def.append(("Fault levels", _tab_sc))
     if out.get("ai_on"):
-        tabs_def.append(("AI report", _tab_ai))
+        tabs_def.append(("Study report", _tab_ai))
     tabs_def.append(("Export", _tab_export))
     for tab, (_, fn) in zip(st.tabs([t[0] for t in tabs_def]), tabs_def):
         with tab:
@@ -743,12 +777,13 @@ def main():
                        layout="wide")
     _init()
     ui_theme.inject()
-    st.html(ui_theme.banner_html())
+    head = st.empty()
     cfg = _sidebar()
     _editors(cfg)
 
     with st.container(horizontal=True, vertical_alignment="center"):
-        if st.button("Solve", type="primary", key="solve"):
+        if st.button("Run study", type="primary", key="solve",
+                     help="Solve the load flow and run every ticked study."):
             _solve(cfg)
         st.button("Reset tables", key="reset_tables", width="content",
                   on_click=_pick_case)
@@ -765,13 +800,24 @@ def main():
         st.sidebar.error(". ".join(errs))
 
     out = st.session_state.get("out")
+    src = st.session_state.get("source") or "Preset"
+    case = st.session_state.get("case", next(iter(CASES))) \
+        if src == "Preset" else "User CSV"
+    head.html(ui_theme.banner_html([
+        ("Case", case),
+        ("Buses / branches", f"{len(st.session_state['bus_tbl'])} / "
+                             f"{len(st.session_state['lines_tbl'])}"),
+        ("Base", f"{cfg['base']:g} MVA"),
+        ("Limits", f"{cfg['vmin']:.2f}-{cfg['vmax']:.2f} pu"),
+        ("Solution", ("SOLVED" if out["ok"] else "NOT SOLVED") if out
+         else "—")]))
     if out:
         _strip(out)
         _tabs(out)
     else:
         st.info(
-            "Adjust the tables above (or load a preset / CSVs) and press "
-            "**Solve**.", title="No results yet",)
+            "Edit the case data above (or load a preset / CSVs) and press "
+            "**Run study**.", title="No results yet",)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
-# GridLens theme: plain engineering-software look, light by default.
+# GridLens theme: planning-tool look (control-room header, grey work area).
 # One accent (muted blue); status colours only for status.
 # The in-app "Dark theme" toggle (ui_theme) restyles surfaces; these values
 # are the light palette and stay the base Streamlit theme.
 [theme]
 base = "light"
-primaryColor = "#1F4E8C"
-backgroundColor = "#FFFFFF"
+primaryColor = "#0B4F8A"
+backgroundColor = "#F3F5F7"
 secondaryBackgroundColor = "#F5F7FA"
 textColor = "#1F2933"
 linkColor = "#1F4E8C"
@@ -13,8 +13,8 @@ linkUnderline = false
 borderColor = "#D5DAE1"
 codeBackgroundColor = "#F5F7FA"
 codeTextColor = "#1F2933"
-font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-headingFont = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+headingFont = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
 baseFontSize = 14
 baseRadius = "4px"
 buttonRadius = "4px"
@@ -41,7 +41,7 @@ backgroundColor = "#F0F3F7"
 secondaryBackgroundColor = "#F5F7FA"
 textColor = "#1F2933"
 borderColor = "#D5DAE1"
-primaryColor = "#1F4E8C"
+primaryColor = "#0B4F8A"
 linkColor = "#1F4E8C"
 codeBackgroundColor = "#F5F7FA"
 

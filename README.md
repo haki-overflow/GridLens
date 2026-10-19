@@ -8,7 +8,8 @@ A Python tool that solves an N-bus power system and turns the results into somet
 - Two editable presets: 5-bus demo and IEEE 14-bus.
 - N-1 contingency sweep: each line removed in turn, case re-solved, ranked worst-first.
 - Three-phase fault analysis at every bus via the Zbus matrix.
-- Network diagram coloured by bus voltage, plus voltage-profile and post-fault charts.
+- One-line diagram in the style of planning tools (bus bars, generator and load symbols, voltage-band colouring, MW on each branch), plus voltage-profile and post-fault charts.
+- Report-style output: bus report (V, angle, P/Q generation and load in MW/MVAr), branch report (sending/receiving-end flows and losses), N-1 limit violation report.
 - Method comparison table (convergence, iterations, loss, minimum voltage).
 - **Voltage stability (P-V curves)**: every load and generator is scaled by λ until the load flow stops solving; reports the loadability margin, the weakest bus and the first λ that breaks Vmin.
 - **Contingency explorer**: pick any line outage, see the network redrawn with that line tripped, post-outage voltages, and the MW flow redistribution on every remaining line.

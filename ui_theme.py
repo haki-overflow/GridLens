@@ -12,31 +12,37 @@ from string import Template
 RADIUS = "4px"
 
 LIGHT = {
-    "bg": "#FFFFFF", "panel": "#F5F7FA", "side": "#F0F3F7", "card": "#FFFFFF",
-    "field": "#FFFFFF", "border": "#D5DAE1", "plot_grid": "#E7EAF0",
-    "text": "#1F2933", "muted": "#52606D",
-    "accent": "#1F4E8C", "accent_hover": "#173D6E", "accent_tint": "#E7EEF7",
+    "bg": "#F3F5F7", "panel": "#FFFFFF", "side": "#E9EDF1", "card": "#FFFFFF",
+    "field": "#FFFFFF", "border": "#C9D1DA", "plot_grid": "#E3E7EC",
+    "text": "#14202B", "muted": "#4A5866",
+    "accent": "#0B4F8A", "accent_hover": "#083B68", "accent_tint": "#E2ECF6",
     "accent_fg": "#FFFFFF",
-    "green": "#2E7D32", "green_tint": "#EDF7EF", "green_border": "#BCD9C0",
-    "amber": "#B26A00", "amber_text": "#8A5200", "amber_tint": "#FDF6E7",
-    "amber_border": "#EBD3A8",
-    "red": "#B3261E", "red_tint": "#FBEDEB", "red_border": "#EBB8B3",
-    "line": "#8A929E",
-    "plot_bg": "#FFFFFF", "plot_ink": "#1F2933", "plot_muted": "#52606D",
+    "green": "#1E6B34", "green_tint": "#E6F2E9", "green_border": "#B3D3BC",
+    "amber": "#B26A00", "amber_text": "#7F4C00", "amber_tint": "#FCF3E1",
+    "amber_border": "#E7CC98",
+    "red": "#B3261E", "red_tint": "#FBEAE8", "red_border": "#E9B3AE",
+    "violet": "#6A3FA0",
+    "line": "#7D8794",
+    "hdr": "#0F1B26", "hdr_text": "#E8EEF4", "hdr_muted": "#9FB0C2",
+    "hazard": "#F2B705",
+    "plot_bg": "#FFFFFF", "plot_ink": "#14202B", "plot_muted": "#4A5866",
 }
 
 DARK = {
-    "bg": "#14181F", "panel": "#1B212A", "side": "#1B212A", "card": "#1B212A",
-    "field": "#1B212A", "border": "#2C3542", "plot_grid": "#232B36",
-    "text": "#E6EAF0", "muted": "#A7B1BD",
-    "accent": "#6EA8E8", "accent_hover": "#8CBCF0", "accent_tint": "#1D2A3B",
-    "accent_fg": "#14181F",
-    "green": "#86D292", "green_tint": "#1D2A21", "green_border": "#33503A",
+    "bg": "#10161D", "panel": "#18212B", "side": "#141C25", "card": "#18212B",
+    "field": "#18212B", "border": "#2B3846", "plot_grid": "#232D38",
+    "text": "#E3E9EF", "muted": "#A3B0BE",
+    "accent": "#6EA8E8", "accent_hover": "#8CBCF0", "accent_tint": "#1B2A3B",
+    "accent_fg": "#10161D",
+    "green": "#86D292", "green_tint": "#1A2A1F", "green_border": "#33503A",
     "amber": "#E5B268", "amber_text": "#E5B268", "amber_tint": "#2A2318",
     "amber_border": "#54452A",
     "red": "#F0908A", "red_tint": "#2B1E1D", "red_border": "#5A3734",
+    "violet": "#B79CE8",
     "line": "#8A93A0",
-    "plot_bg": "#FFFFFF", "plot_ink": "#1F2933", "plot_muted": "#52606D",
+    "hdr": "#0A1017", "hdr_text": "#E8EEF4", "hdr_muted": "#9FB0C2",
+    "hazard": "#F2B705",
+    "plot_bg": "#FFFFFF", "plot_ink": "#14202B", "plot_muted": "#4A5866",
 }
 
 PALETTES = {"light": LIGHT, "dark": DARK}
@@ -61,13 +67,16 @@ CONTRAST_PAIRS = [
     ("Amber status on app background", "amber_text", "bg"),
     ("Red status on tinted badge", "red", "red_tint"),
     ("Red status on app background", "red", "bg"),
+    ("Header text on header band", "hdr_text", "hdr"),
+    ("Header secondary text on header band", "hdr_muted", "hdr"),
     ("Plot text on plot background", "plot_ink", "plot_bg"),
     ("Plot secondary text on plot background", "plot_muted", "plot_bg"),
 ]
 
 CSS = Template("""<style>
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
 .stApp, html, body { background:$bg; color:$text;
-  font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 [data-testid="stHeader"] { background:transparent; }
 [data-testid="stMainBlockContainer"] { padding-top:1.1rem; padding-bottom:2rem; }
 [data-testid="stVerticalBlock"] { gap:0.55rem; }
@@ -80,15 +89,28 @@ a, a:visited { color:$accent; }
   font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;
   font-size:12.5px; background:$panel; color:$text; border-radius:$radius; }
 
-/* --- inside the app banner: plain header, no icon, no gradient ---------- */
-.gl-banner { padding:2px 0 10px; margin-bottom:6px; border-bottom:1px solid $border; }
-.gl-banner h1 { margin:0; font-size:22px; font-weight:600; color:$text; }
-.gl-banner p { margin:2px 0 0; font-size:13px; color:$muted; }
+/* --- header band: control-room bar with a hazard-yellow rule ------------ */
+.gl-banner { display:flex; justify-content:space-between; align-items:center;
+  flex-wrap:wrap; gap:8px 24px; background:$hdr; color:$hdr_text;
+  padding:10px 16px; border-radius:$radius; border-bottom:3px solid $hazard;
+  margin-bottom:4px; }
+.gl-banner .gl-title { font-size:17px; font-weight:700; letter-spacing:.14em; }
+.gl-banner .gl-sub { font-size:12px; color:$hdr_muted; letter-spacing:.02em; }
+.gl-banner .gl-read { display:flex; gap:18px; flex-wrap:wrap; }
+.gl-banner .gl-read div { font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:12.5px; color:$hdr_text; }
+.gl-banner .gl-read span { display:block; font-family:"IBM Plex Sans",sans-serif;
+  font-size:10px; color:$hdr_muted; text-transform:uppercase; letter-spacing:.08em; }
+.gl-sec { font-size:11px; font-weight:600; color:$muted; text-transform:uppercase;
+  letter-spacing:.09em; border-bottom:1px solid $border; padding-bottom:3px;
+  margin:6px 0 2px; }
 
 /* --- sidebar ------------------------------------------------------------ */
 [data-testid="stSidebar"] { background:$side; border-right:1px solid $border; }
-[data-testid="stSidebar"] [data-testid="stHeading"] p {
-  font-size:13px; font-weight:600; color:$muted; }
+[data-testid="stSidebar"] [data-testid="stHeading"] p,
+[data-testid="stSidebar"] h2 {
+  font-size:11px !important; font-weight:600; color:$muted;
+  text-transform:uppercase; letter-spacing:.09em; }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { color:$text; }
 
 /* --- buttons: flat, 4px radius, no glow --------------------------------- */
@@ -121,7 +143,9 @@ a, a:visited { color:$accent; }
   border:1px solid $accent !important; color:$accent !important; }
 
 /* --- tabs: accent underline, no pill chrome ----------------------------- */
-[data-testid="stTab"] { font-size:13.5px; color:$muted; }
+[data-testid="stTab"] p { font-size:11.5px; color:$muted; font-weight:600;
+  text-transform:uppercase; letter-spacing:.07em; }
+[data-testid="stTab"][aria-selected="true"] p { color:$accent !important; }
 [data-testid="stTab"][aria-selected="true"] { color:$accent !important; }
 [data-testid="stTabs"] [data-baseweb="tab-highlight"],
 [data-testid="stTabs"] [data-baseweb="tab-border"] {
@@ -129,19 +153,24 @@ a, a:visited { color:$accent; }
 
 /* --- metric cards: white card, 1px border, no side stripe --------------- */
 [class*="st-key-kpi"] { background:$card; border:1px solid $border;
-  border-radius:$radius; padding:7px 12px 1px; height:100%; }
+  border-top:2px solid $accent; border-radius:$radius; padding:6px 12px 1px;
+  height:100%; }
+[class*="st-key-kpi-bad"] { border-top-color:$red; }
 [class*="st-key-kpi"] [data-testid="stMetricLabel"] p {
-  color:$muted; font-size:12px; font-weight:500; }
+  color:$muted; font-size:10.5px; font-weight:600; text-transform:uppercase;
+  letter-spacing:.07em; }
 [class*="st-key-kpi"] [data-testid="stMetricValue"] {
-  color:$text; font-size:1.35rem; font-weight:600; line-height:1.3; }
+  color:$text; font-size:1.25rem; font-weight:500; line-height:1.3;
+  font-family:"IBM Plex Mono",ui-monospace,monospace; }
 [class*="st-key-kpi"] [data-testid="stMetricDelta"] {
   color:$muted; font-size:12px; }
 [class*="st-key-kpi-bad"] [data-testid="stMetricValue"] { color:$red !important; }
 
 /* --- status badges: small, flat, tinted -------------------------------- */
-.gl-badge { display:inline-block; padding:1px 8px; border-radius:$radius;
-  font-size:12px; font-weight:600; line-height:1.7; white-space:nowrap;
-  border:1px solid transparent; font-family:inherit; }
+.gl-badge { display:inline-block; padding:1px 8px; border-radius:2px;
+  font-size:11px; font-weight:600; line-height:1.8; white-space:nowrap;
+  border:1px solid transparent; font-family:"IBM Plex Mono",ui-monospace,monospace;
+  text-transform:uppercase; letter-spacing:.04em; }
 .gl-badge.ok { background:$green_tint; color:$green; border-color:$green_border; }
 .gl-badge.bad { background:$red_tint; color:$red; border-color:$red_border; }
 .gl-badge.warn { background:$amber_tint; color:$amber_text; border-color:$amber_border; }
@@ -167,7 +196,8 @@ a, a:visited { color:$accent; }
 
 /* --- data grids: 13px, light rules, no heavy chrome --------------------- */
 [data-testid="stDataFrame"], [data-testid="stDataEditor"] { font-size:13px; }
-[data-testid="stDataFrame"] { --gdg-font-family:"Inter",system-ui,sans-serif !important;
+[data-testid="stDataFrame"] { --gdg-font-family:"IBM Plex Mono",ui-monospace,monospace !important;
+  --gdg-header-font-style:600 11px !important;
   --gdg-editor-font-size:13px !important; --gdg-bg-cell:$field !important;
   --gdg-bg-header:$panel !important; --gdg-bg-header-hovered:$panel !important;
   --gdg-text-header:$muted !important; --gdg-text-dark:$text !important;
@@ -201,10 +231,18 @@ def css(dark=False):
     return CSS.substitute(values)
 
 
-def banner_html():
-    return ('<div class="gl-banner"><h1>GridLens</h1>'
-            '<p>Power system analysis &middot; load flow &middot; '
-            'N-1 contingency &middot; fault study</p></div>')
+def banner_html(readouts=()):
+    """Header band; readouts is a list of (label, value) shown on the right."""
+    read = "".join(f"<div><span>{k}</span>{v}</div>" for k, v in readouts)
+    return ('<div class="gl-banner"><div><div class="gl-title">GRIDLENS</div>'
+            '<div class="gl-sub">Steady-state network study &middot; load '
+            'flow &middot; N-1 security &middot; voltage stability &middot; '
+            f'fault levels</div></div><div class="gl-read">{read}</div></div>')
+
+
+def section(text):
+    """Small uppercase section label with a rule, as in report printouts."""
+    return f'<div class="gl-sec">{text}</div>'
 
 
 def badge(text, tone="ok"):

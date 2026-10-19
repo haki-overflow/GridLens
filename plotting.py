@@ -1,4 +1,4 @@
-"""GridLens matplotlib figures, styled by ui_theme (plain engineering look).
+"""GridLens matplotlib figures, styled by ui_theme (planning-tool look).
 
 All figures share one palette (ui_theme.LIGHT): white background, grey axes,
 accent blue data, red only for limit violations/limits.
@@ -44,22 +44,37 @@ def _layout(n, edges, seed=1):
     return pos
 
 
+def _vband(v, vmin, vmax, margin=0.02):
+    """Voltage band colour: violation red/violet, near-limit amber, else ink."""
+    if v < vmin:
+        return P["red"]
+    if v > vmax:
+        return P["violet"]
+    if v < vmin + margin or v > vmax - margin:
+        return P["amber"]
+    return P["text"]
+
+
 def draw_network(res, lines, vmin, vmax, flows=None, base=100.0,
-                 tripped=None):
-    """Network diagram: white-fill bus circles (accent outline, red when |V|
-    is outside the limits), mid-grey lines whose width follows |P_ij|, one
-    small midpoint arrow for flow direction, P in MW labelled on each line.
-    tripped: index of an outaged line (drawn dashed red; flows then has one
-    row fewer than lines)."""
+                 tripped=None, bus=None):
+    """One-line diagram in the style of planning tools: each bus is a short
+    thick bus bar coloured by voltage band, generators (Slack/PV) drawn as a
+    circled ~ above the bar, loads as an arrow below it. Branch width follows
+    |P|, an arrow marks flow direction and the MW value sits on the branch.
+    tripped: index of an outaged line (dashed red; flows has one row fewer).
+    bus: input bus table, used for the generator and load symbols."""
     plt = T.mpl_style()
     n = len(res)
     edges = [(int(a) - 1, int(b) - 1)
              for a, b in zip(lines["From"], lines["To"])]
     pos = _layout(n, edges)
     v = res["V (pu)"].to_numpy(dtype=float)
-    anchors = np.vstack([pos, pos - [0.0, 0.05]])  # node circles + |V| texts
+    ang = res["Angle (deg)"].to_numpy(dtype=float)
+    hw = 0.045  # bus bar half width
+    anchors = np.vstack([pos, pos + [0.0, 0.06], pos - [0.0, 0.06],
+                         pos + [hw + 0.07, 0.0]])
 
-    lw = np.full(len(edges), 1.5)
+    lw = np.full(len(edges), 1.4)
     p_mw = None
     dirs = np.ones(len(edges))
     if flows is not None and tripped is not None:
@@ -71,31 +86,34 @@ def draw_network(res, lines, vmin, vmax, flows=None, base=100.0,
         p_mw = pij * base
         p = np.abs(pij)
         if len(p) and p.max() > 0:
-            lw = 1.5 + 2.5 * p / p.max()
+            lw = 1.2 + 2.6 * p / p.max()
         dirs = np.where(pij >= 0, 1, -1)
 
-    fig, ax = plt.subplots(figsize=(7, 4.4))
+    def tap(i, j):  # where branch i-j meets bus bar i
+        x = np.clip(pos[j, 0], pos[i, 0] - hw * 0.8, pos[i, 0] + hw * 0.8)
+        return np.array([x, pos[i, 1]])
+
+    fig, ax = plt.subplots(figsize=(7.6, 5.0))
     for ek, (i, j) in enumerate(edges):
-        a, b = pos[i], pos[j]
+        a, b = tap(i, j), tap(j, i)
         if ek == tripped:
-            ax.plot(*zip(a, b), c=P["red"], lw=1.6, ls=(0, (4, 3)), zorder=1)
-            m = (a + b) / 2
-            ax.plot(*m, marker="X", ms=9, color=P["red"], mec=P["plot_bg"],
-                    zorder=4)
+            ax.plot(*zip(a, b), c=P["red"], lw=1.4, ls=(0, (4, 3)), zorder=1)
+            ax.plot(*((a + b) / 2), marker="X", ms=9, color=P["red"],
+                    mec=P["plot_bg"], zorder=4)
             continue
         ax.plot(*zip(a, b), c=P["line"], lw=float(lw[ek]), zorder=1,
-                solid_capstyle="round")
+                solid_capstyle="butt")
         u = b - a
         u = u / (np.linalg.norm(u) + 1e-9)
         if dirs[ek] < 0:
             u = -u
         mid = (a + b) / 2
-        ax.annotate("", xy=mid + 0.028 * u, xytext=mid - 0.028 * u, zorder=3,
-                    arrowprops=dict(arrowstyle="-|>", color=P["muted"],
-                                    lw=1.0, mutation_scale=9))
+        ax.annotate("", xy=mid + 0.03 * u, xytext=mid - 0.03 * u, zorder=3,
+                    arrowprops=dict(arrowstyle="-|>", color=P["text"],
+                                    lw=0.9, mutation_scale=10))
         if p_mw is not None:
-            t = 0.34 if dirs[ek] > 0 else 0.66
-            perp = np.array([-u[1], u[0]]) * 0.032
+            t = 0.32 if dirs[ek] > 0 else 0.68
+            perp = np.array([-u[1], u[0]]) * 0.03
 
             def pick(pos_):
                 s_ = (pos_ + perp, pos_ - perp)
@@ -104,30 +122,54 @@ def draw_network(res, lines, vmin, vmax, flows=None, base=100.0,
                     (s_[1], near_[1])
 
             lab, gap = pick(a + (b - a) * t)
-            if gap < 0.055:  # blocked by a node or its |V| label: slide to mid
+            if gap < 0.06:
                 lab2, gap2 = pick(a + (b - a) * (t + (0.5 - t) * 0.6))
                 if gap2 > gap:
                     lab = lab2
-            ax.text(lab[0], lab[1], f"{abs(p_mw[ek]):.0f}", fontsize=7.5,
-                    ha="center", va="center", color=P["muted"], zorder=4,
-                    bbox=dict(boxstyle="round,pad=0.12", facecolor=P["plot_bg"],
-                              edgecolor=P["border"], linewidth=0.6))
+            ax.text(lab[0], lab[1], f"{abs(p_mw[ek]):.1f}", fontsize=7,
+                    family="monospace", ha="center", va="center",
+                    color=P["muted"], zorder=4,
+                    bbox=dict(boxstyle="square,pad=0.15",
+                              facecolor=P["plot_bg"], edgecolor="none"))
 
-    bad = (v < vmin) | (v > vmax)
-    ax.scatter(pos[:, 0], pos[:, 1], s=430, facecolor=P["plot_bg"],
-               edgecolors=[P["red"] if x else P["accent"] for x in bad],
-               linewidths=2.0, zorder=5)
+    types = bus["Type"].to_numpy() if bus is not None else np.full(n, "PQ")
+    pd_ = bus["Pd"].to_numpy(dtype=float) if bus is not None else np.zeros(n)
     for i in range(n):
-        ax.text(*pos[i], f"{i + 1}", ha="center", va="center", fontsize=9,
-                fontweight=600, color=P["text"], zorder=6)
-        ax.text(pos[i, 0], pos[i, 1] - 0.05, f"{v[i]:.3f}", ha="center",
-                va="top", fontsize=7.5, color=P["muted"], zorder=6,
-                bbox=dict(boxstyle="round,pad=0.08", facecolor=P["plot_bg"],
+        x, y = pos[i]
+        col = _vband(v[i], vmin, vmax)
+        ax.plot([x - hw, x + hw], [y, y], color=col, lw=5.5,
+                solid_capstyle="butt", zorder=5)
+        if types[i] in ("Slack", "PV"):
+            ax.plot([x, x], [y, y + 0.035], color=P["text"], lw=1, zorder=5)
+            ax.add_patch(plt.Circle((x, y + 0.055), 0.02, fill=True,
+                                    facecolor=P["plot_bg"],
+                                    edgecolor=P["text"], lw=1.1, zorder=6))
+            ax.text(x, y + 0.055, "~", ha="center", va="center",
+                    fontsize=10, color=P["text"], zorder=7)
+        if pd_[i] > 0:
+            ax.annotate("", xy=(x, y - 0.06), xytext=(x, y - 0.004),
+                        zorder=5, arrowprops=dict(arrowstyle="-|>", lw=1.1,
+                                                  color=P["text"],
+                                                  mutation_scale=9))
+        ax.text(x - hw - 0.008, y, f"{i + 1}", ha="right", va="center",
+                fontsize=8, fontweight=700, color=P["text"], zorder=6)
+        ax.text(x + hw + 0.008, y, f"{v[i]:.3f}\n{ang[i]:.1f}\u00b0",
+                ha="left", va="center", fontsize=6.8, family="monospace",
+                color=col, zorder=6, linespacing=1.1,
+                bbox=dict(boxstyle="square,pad=0.1", facecolor=P["plot_bg"],
                           edgecolor="none"))
 
+    from matplotlib.lines import Line2D
+    keys = [Line2D([], [], color=P["text"], lw=5, label="normal"),
+            Line2D([], [], color=P["amber"], lw=5,
+                   label="within 0.02 pu of limit"),
+            Line2D([], [], color=P["red"], lw=5, label=f"< {vmin:.2f} pu"),
+            Line2D([], [], color=P["violet"], lw=5, label=f"> {vmax:.2f} pu")]
+    ax.legend(handles=keys, loc="upper center", bbox_to_anchor=(0.5, 0.0),
+              ncol=4, fontsize=7, handlelength=1.6, columnspacing=1.2)
     ax.set_aspect("equal")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
+    ax.set_xlim(-0.04, 1.08)
+    ax.set_ylim(-0.04, 1.06)
     ax.axis("off")
     fig.tight_layout()
     return fig

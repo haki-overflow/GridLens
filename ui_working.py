@@ -156,23 +156,26 @@ def page_answer(out, conversion=None):
     btab, ftab = W.results_tables(out["res"], out["flows"], bus, base)
     k = int(np.where(bus["Type"].values == "Slack")[0][0])
     sp = btab["Pg (MW)"].iloc[k], btab["Qg (MVAr)"].iloc[k]
-    left, right = st.columns([1.25, 1], gap="medium")
-    left.html(ui_theme.section("Bus results"))
-    left.dataframe(btab, hide_index=True)
-    left.markdown(f"**Slack bus {k + 1}:** S = {sp[0]:.3f} + j{sp[1]:.3f} MVA")
-    right.html(ui_theme.section("Line flows and losses"))
-    right.dataframe(ftab, hide_index=True)
-    right.markdown(f"**Total losses:** {out['flows']['Loss_P'].sum() * base:.4f} MW, "
-                   f"{out['flows']['Loss_Q'].sum() * base:.4f} MVAr")
-    show = st.slider("Iterations written out in full", 1, 5, 2, key="ans_show")
+    st.html(f'<div class="gl-ok">Slack bus {k + 1}: S = {sp[0]:.3f} + '
+            f'j{sp[1]:.3f} MVA &nbsp;&middot;&nbsp; total losses '
+            f'{out["flows"]["Loss_P"].sum() * base:.4f} MW, '
+            f'{out["flows"]["Loss_Q"].sum() * base:.4f} MVAr</div>')
+    srow = st.columns([3, 1], vertical_alignment="bottom")
+    show = srow[0].slider("Iterations written out in full", 1, 5, 2,
+                          key="ans_show")
     text = W.answer_text(bus, lines, out["res"], out["flows"], base, out["method"],
                          W.trace_lines(out["method"], bus, lines,
                                        tol=out["tol"], show=show),
                          conversion=conversion)
-    st.html(ui_theme.section("Copy as answer"))
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.caption("Plain text: given data → per unit → Ybus → iterations → "
-                   "results. Copy with the icon at the top right of the box.")
-        st.download_button("Download .txt", text.encode(), "gridlens_answer.txt",
-                           "text/plain", key="ans_dl")
-    st.code(text, language=None, height=420)
+    srow[1].download_button("Download .txt", text.encode(),
+                            "gridlens_answer.txt", "text/plain",
+                            key="ans_dl", width="stretch")
+    t_res, t_flow, t_text = st.tabs(["Bus results", "Line flows and losses",
+                                     "Full written answer"])
+    with t_res:
+        st.dataframe(btab, hide_index=True)
+    with t_flow:
+        st.dataframe(ftab, hide_index=True)
+    with t_text:
+        st.caption("Copy with the icon at the top right of the box.")
+        st.code(text, language=None, height=520)

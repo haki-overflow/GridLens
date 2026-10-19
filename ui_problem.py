@@ -82,18 +82,20 @@ def page(load):
                                      dict(zones=r["zones"], table=r["table"])),
                 help="Replace the Dashboard case with this per-unit data.")
 
-    left, right = st.columns([1, 1.6], gap="medium")
-    left.html(ui_theme.section("Base values per zone"))
-    left.dataframe(r["zones"].round(4), hide_index=True)
-    if (r["lines"]["Tap"] - 1).abs().max() > 1e-9:
-        left.caption("Off-nominal taps present: switch Mode to Advanced and "
-                     "turn on Transformer taps so the study uses them.")
-    if (r["bus"]["Qmax"] < 99).any() or (r["bus"]["Qmin"] > -99).any():
-        left.caption("Q limits given: Advanced mode → Generator Q limits "
-                     "enforces them.")
-    right.html(ui_theme.section("Per-unit conversion"))
-    right.dataframe(r["table"].round(6), hide_index=True)
-    with st.expander("Per-unit case (what the solver gets)"):
+    st.html(ui_theme.section("Check your conversion"))
+    t_zone, t_pu, t_case = st.tabs(["Base values per zone", "Per-unit conversion",
+                                    "Per-unit case (what the solver gets)"])
+    with t_zone:
+        st.dataframe(r["zones"].round(4), hide_index=True)
+        if (r["lines"]["Tap"] - 1).abs().max() > 1e-9:
+            st.caption("Off-nominal taps present: switch Mode to Advanced and "
+                       "turn on Transformer taps so the study uses them.")
+        if (r["bus"]["Qmax"] < 99).any() or (r["bus"]["Qmin"] > -99).any():
+            st.caption("Q limits given: Advanced mode → Generator Q limits "
+                       "enforces them.")
+    with t_pu:
+        st.dataframe(r["table"].round(6), hide_index=True)
+    with t_case:
         a, b = st.columns([1.3, 1])
         a.dataframe(r["bus"].round(6), hide_index=True)
         b.dataframe(r["lines"].round(6), hide_index=True)

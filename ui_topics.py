@@ -41,27 +41,15 @@ def page_seqfault(out):
             1j * np.radians(out["res"]["Angle (deg)"].to_numpy()))
     zf = complex(zr, zx)
 
-    with st.expander("Sequence network data (edit to match the question)"):
-        st.caption("Reactances in pu on the system base. Generators: Conn Yg = "
-                   "grounded (X0 + 3Xn to ground), Y / D = no zero-sequence "
-                   "path. Transformers: Yg-Yg passes zero sequence, Yg-D "
-                   "grounds the Yg side, other pairs block it. Δ-Y phase "
-                   "shifts are not modelled.")
-        g0, b0 = SF.seed_tables(bus, lines)
-        a, b, kvc = st.columns([1, 1.9, 0.6], gap="small")
-        a.html(ui_theme.section("Generators"))
-        gens = ui_tables.editor(a, "sf_gens", lambda: g0, seed, num_rows="dynamic",
-                                column_config={"Conn": st.column_config.SelectboxColumn(options=CONN)})
-        b.html(ui_theme.section("Lines and transformers"))
-        br = ui_tables.editor(b, "sf_br", lambda: b0, seed, column_config={
-            "Kind": st.column_config.SelectboxColumn(options=["line", "transformer"]),
-            "Conn From": st.column_config.SelectboxColumn(options=CONN),
-            "Conn To": st.column_config.SelectboxColumn(options=CONN)})
-        kvc.html(ui_theme.section("Base kV"))
-        kv0 = bus["kV"].astype(float) if "kV" in bus else pd.Series([33.0] * n)
-        kvt = ui_tables.editor(kvc, "sf_kv", lambda: pd.DataFrame(
-            {"Bus": np.arange(1, n + 1), "kV": kv0.values}), seed,
-            disabled=["Bus"])
+    g0, b0 = SF.seed_tables(bus, lines)
+    kv0 = bus["kV"].astype(float) if "kV" in bus else pd.Series([33.0] * n)
+    kv_default = lambda: pd.DataFrame({"Bus": np.arange(1, n + 1),
+                                       "kV": kv0.values})
+    if st.button("Edit sequence data", key="sf_edit"):
+        _dlg_seqdata(g0, b0, kv_default, seed)
+    gens = ui_tables.table("sf_gens", lambda: g0, seed)
+    br = ui_tables.table("sf_br", lambda: b0, seed)
+    kvt = ui_tables.table("sf_kv", kv_default, seed)
     try:
         kv = kvt["kV"].astype(float).to_numpy()
         tab = SF.fault_table(kind, gens, br, vf, zf, out["base"], kv)
@@ -75,29 +63,57 @@ def page_seqfault(out):
            ("Z1 / Z2 / Z0 (Thevenin)", " / ".join(f"{abs(z):.4f}" for z in r["Zth"]),
             "pu at the fault bus"),
            ("I1 / I2 / I0", f"{abs(I1):.3f} / {abs(I2):.3f} / {abs(I0):.3f}", "pu")])
-    left, right = st.columns([1, 1.5], gap="medium")
-    left.html(ui_theme.section(f"{kind} fault level at every bus"))
-    left.dataframe(tab.round(4), hide_index=True)
-    right.html(ui_theme.section(f"Currents at the fault (bus {k})"))
-    right.dataframe(pd.DataFrame({
-        "": ["Sequence 0 / 1 / 2", "Phase a / b / c (pu)", "Phase a / b / c (kA)"],
-        "0 / a": [pfmt(I0), pfmt(r["Iabc"][0]), f"{r['kA'][0]:.4f}"],
-        "1 / b": [pfmt(I1), pfmt(r["Iabc"][1]), f"{r['kA'][1]:.4f}"],
-        "2 / c": [pfmt(I2), pfmt(r["Iabc"][2]), f"{r['kA'][2]:.4f}"]}),
-        hide_index=True)
-    right.html(ui_theme.section("Bus voltages during the fault (pu)"))
-    V, Vp = r["V012"], r["Vabc"]
-    right.dataframe(pd.DataFrame({
-        "Bus": np.arange(1, n + 1),
-        "V0": [pfmt(v) for v in V[:, 0]], "V1": [pfmt(v) for v in V[:, 1]],
-        "V2": [pfmt(v) for v in V[:, 2]], "Va": [pfmt(v) for v in Vp[:, 0]],
-        "Vb": [pfmt(v) for v in Vp[:, 1]], "Vc": [pfmt(v) for v in Vp[:, 2]]}),
-        hide_index=True, height=min(36 + 35 * n, 300))
-    st.html(ui_theme.section("Branch currents during the fault (pu, From → To)"))
-    L = r["lines"]
-    st.dataframe(L.assign(**{c_: [pfmt(v) for v in L[c_]]
-                             for c_ in ("I0", "I1", "I2", "Ia", "Ib", "Ic")}),
-                 hide_index=True, height=240)
+    t_lvl, t_cur, t_vol, t_br = st.tabs(["Fault levels", "Fault currents",
+                                         "Bus voltages", "Branch currents"])
+    with t_lvl:
+        st.caption(f"{kind} fault level at every bus.")
+        st.dataframe(tab.round(4), hide_index=True)
+    with t_cur:
+        st.caption(f"Currents at the fault (bus {k}).")
+        st.dataframe(pd.DataFrame({
+            "": ["Sequence 0 / 1 / 2", "Phase a / b / c (pu)",
+                 "Phase a / b / c (kA)"],
+            "0 / a": [pfmt(I0), pfmt(r["Iabc"][0]), f"{r['kA'][0]:.4f}"],
+            "1 / b": [pfmt(I1), pfmt(r["Iabc"][1]), f"{r['kA'][1]:.4f}"],
+            "2 / c": [pfmt(I2), pfmt(r["Iabc"][2]), f"{r['kA'][2]:.4f}"]}),
+            hide_index=True)
+    with t_vol:
+        st.caption("Bus voltages during the fault (pu).")
+        V, Vp = r["V012"], r["Vabc"]
+        st.dataframe(pd.DataFrame({
+            "Bus": np.arange(1, n + 1),
+            "V0": [pfmt(v) for v in V[:, 0]], "V1": [pfmt(v) for v in V[:, 1]],
+            "V2": [pfmt(v) for v in V[:, 2]], "Va": [pfmt(v) for v in Vp[:, 0]],
+            "Vb": [pfmt(v) for v in Vp[:, 1]], "Vc": [pfmt(v) for v in Vp[:, 2]]}),
+            hide_index=True)
+    with t_br:
+        st.caption("Branch currents during the fault (pu, From → To).")
+        L = r["lines"]
+        st.dataframe(L.assign(**{c_: [pfmt(v) for v in L[c_]]
+                                 for c_ in ("I0", "I1", "I2", "Ia", "Ib", "Ic")}),
+                     hide_index=True)
+
+
+@st.dialog("Sequence network data", width="large")
+def _dlg_seqdata(g0, b0, kv_default, seed):
+    st.caption("Reactances in pu on the system base. Generators: Conn Yg = "
+               "grounded (X0 + 3Xn to ground), Y / D = no zero-sequence "
+               "path. Transformers: Yg-Yg passes zero sequence, Yg-D "
+               "grounds the Yg side, other pairs block it. Δ-Y phase "
+               "shifts are not modelled.")
+    t1, t2, t3 = st.tabs(["Generators", "Lines and transformers", "Base kV"])
+    with t1:
+        ui_tables.editor(t1, "sf_gens", lambda: g0, seed, num_rows="dynamic",
+                         column_config={"Conn": st.column_config.SelectboxColumn(options=CONN)})
+    with t2:
+        ui_tables.editor(t2, "sf_br", lambda: b0, seed, column_config={
+            "Kind": st.column_config.SelectboxColumn(options=["line", "transformer"]),
+            "Conn From": st.column_config.SelectboxColumn(options=CONN),
+            "Conn To": st.column_config.SelectboxColumn(options=CONN)})
+    with t3:
+        ui_tables.editor(t3, "sf_kv", kv_default, seed, disabled=["Bus"])
+    if st.button("Apply and recalculate", type="primary", key="sf_apply"):
+        st.rerun()
 
 
 # ------------------------------------------------------ symmetrical components

@@ -10,11 +10,13 @@ import { buildShell } from "./shell";
 import { getState, setState } from "./state";
 import { DocTabs } from "./tabs";
 import { mountToolbar } from "./toolbar";
+import { mountTree } from "./tree";
 
 const shell = buildShell(document.getElementById("app")!);
 mountBusy(shell.busy);
 mountChrome(shell.readouts, shell.status, shell.outTabs, shell.out, shell.props);
 mountToolbar(shell.tools);
+mountTree(shell.tree);
 
 const tabs = new DocTabs(shell.tabs, shell.docs, lookupDoc,
   (open, active) => setState({ openDocs: open, activeDoc: active }));

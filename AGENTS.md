@@ -27,6 +27,8 @@ gridcore.py    prep_case (validation), run_study, outage: no Streamlit; used by
                app.py and the API
 api/           FastAPI server (server.py endpoints, schema.py JSON helpers);
                run_api.sh, docs at http://localhost:8000/docs
+web/           PSCAD-style workspace (Vite + TypeScript + D3); colours only from
+               src/tokens.css (tools/sync_tokens.py); run_workspace.sh serves it on :8000
 plotting.py    matplotlib figures (voltage profile, convergence, P-V, faults)
 oneline.py     interactive single-line diagram (Plotly): layout, routing, hover
 theme.css      all colours/sizes as CSS variables (single KiCad-style dark theme)

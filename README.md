@@ -197,3 +197,8 @@ One main result per screen; detail sits behind tabs or pop-ups.
 ## JSON API (FastAPI)
 
 `./run_api.sh` starts `uvicorn api.server:app` on port 8000; interactive docs at http://localhost:8000/docs. A case is `{"bus": [...], "lines": [...], "settings": {...}}` (same per-unit columns as the app tables; `GET /api/case/{name}` returns a preset in this form). Endpoints: `/api/cases`, `/api/case/{name}`, `/api/validate`, `/api/study`, `/api/layout`, `/api/outage/{k}` (k = 0-based line row), `/api/fault`, `/api/seqfault`, `/api/ybus`, `/api/iterations`, `/api/answer`, `/api/dispatch`, `/api/symcomp`, `/api/tline`, `/api/topu`. Bad data returns 422 `{"problems": [...]}`. Complex values are `{"re", "im", "polar"}`; NaN is `null`; floats are unrounded.
+
+## Web workspace (PSCAD-style, v1.3)
+
+`./run_workspace.sh` builds `web/` (Vite + TypeScript + D3) when needed and serves it with the API on http://localhost:8000. Layout: title readouts, toolbar (Run F5, Reset, preset / Import / Export `.gridlens.json`, Fit Ctrl+0, Grid, Flows, Angles, Report), project tree, tabbed documents (`#/doc/<id>`) over a Messages panel, properties panel, status bar. Panels resize with splitters (double-click resets). Colours come from `web/src/tokens.css`, generated from `theme.css` by `python tools/sync_tokens.py` (pytest checks they match). Development: run the API (`./run_api.sh`) and `cd web && npm run dev` (proxies `/api`).
+

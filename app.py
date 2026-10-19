@@ -12,6 +12,7 @@ import streamlit as st
 
 import ui_problem
 import ui_theme
+import ui_working
 from ai_report import ai_report, lm_models
 import oneline
 from cases import CASES, COORDS
@@ -397,9 +398,9 @@ def _study(b, l, method, tol, base, vmin, vmax, qlim=False):
     """Load flow plus every study, cached on the case and settings so any
     page or browser tab gets the same results without re-solving. With
     qlim the main load flow enforces generator Q limits (PV -> PQ)."""
-    qlog = []
+    qlog, b_lf = [], b
     if qlim:
-        res, flows, ok, hist, _, qlog = solve_with_qlimits(b, l, method, tol)
+        res, flows, ok, hist, b_lf, qlog = solve_with_qlimits(b, l, method, tol)
     else:
         res, flows, ok, hist = solve_loadflow(b, l, method, tol)
     rows = []
@@ -418,7 +419,7 @@ def _study(b, l, method, tol, base, vmin, vmax, qlim=False):
     return dict(res=res, flows=flows, ok=ok, its=len(hist) - 1, hist=hist,
                 method=method, tol=tol, b=b, l=l, cmp=cmp_df,
                 n1=n1, pv=pv, loss=loss, load=load, vmin=vmin, vmax=vmax, base=base,
-                qlog=qlog,
+                qlog=qlog, b_lf=b_lf,
                 slack_k=k + 1, slack_p=res["P_inj"].iloc[k] * base,
                 summary=(f"Method: {method}, base {base} MVA\n"
                          + res.round(4).to_string(index=False)
@@ -802,8 +803,9 @@ def _tab_ai(out):
         st.caption("No report yet: generate it above.")
 
 
-def _load_problem(bus, lines, sbase):
+def _load_problem(bus, lines, sbase, conversion=None):
     """Problem input -> study case (on_click, runs before the widgets)."""
+    st.session_state["prob_conv"] = conversion
     st.session_state["bus_tbl"] = bus.copy()
     st.session_state["lines_tbl"] = lines.copy()
     st.session_state["case_src"] = "problem"
@@ -819,6 +821,12 @@ def _tab_problem(out):
     ui_problem.page(_load_problem)
 
 
+def _tab_answer(out):
+    conv = st.session_state.get("prob_conv") \
+        if st.session_state.get("case_src") == "problem" else None
+    ui_working.page_answer(out, conv)
+
+
 def _tab_dashboard(out):
     _strip(out)
     if out.get("qlog"):
@@ -830,6 +838,9 @@ def _tab_dashboard(out):
 PAGES = (("Dashboard", "dashboard", _tab_dashboard),
          ("Problem input", "problem", _tab_problem),
          ("Network diagram", "network", _tab_network),
+         ("Ybus matrix", "ybus", ui_working.page_ybus),
+         ("Iterations", "iterations", ui_working.page_iterations),
+         ("Worked answer", "answer", _tab_answer),
          ("Solver check", "solver-check", _tab_cmp),
          ("Contingency N-1", "contingency", _tab_n1),
          ("PV analysis", "pv-analysis", _tab_pv),

@@ -104,7 +104,8 @@ def page(load):
         st.error(f"Cannot convert: {e}")
         return
     c[3].button("Load into study", type="primary", key="pi_load",
-                on_click=load, args=(r["bus"], r["lines"], ss["prob_sbase"]),
+                on_click=load, args=(r["bus"], r["lines"], ss["prob_sbase"],
+                                     dict(zones=r["zones"], table=r["table"])),
                 help="Replace the Dashboard case with this per-unit data.")
 
     left, right = st.columns([1, 1.6], gap="medium")

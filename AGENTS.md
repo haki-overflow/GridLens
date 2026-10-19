@@ -23,6 +23,8 @@ solver.py      METHODS, build_ybus, injections, newton_raphson, fast_decoupled,
                gauss_seidel, solve_loadflow
 studies.py     contingency (N-1), outage (one line out), pv_curve (load
                scaling to the nose), fault_analysis (3-phase, Zbus)
+gridcore.py    prep_case (validation), run_study, outage: no Streamlit; used by
+               app.py and the API
 plotting.py    matplotlib figures (voltage profile, convergence, P-V, faults)
 oneline.py     interactive single-line diagram (Plotly): layout, routing, hover
 theme.css      all colours/sizes as CSS variables (single KiCad-style dark theme)
@@ -92,7 +94,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - All studies (N-1, solver check, PV analysis, fault levels, study report) run on **Run study** (Dashboard, below the case tables) or **Re-run study** (header of every results page). The banner is drawn after the page runs and shows amber STALE when `_inputs_sig(cfg)` differs from the last run. Pages (st.navigation, grouped): Load flow (Dashboard, Problem input, Network diagram, Solver check), Worked solution (Ybus matrix, Iterations, Worked answer), Studies (Contingency N-1, PV analysis, Fault levels, Unsymmetrical faults, Economic dispatch), Calculators (Symmetrical components, Line parameters), Report (Study report, with the single "Download study report" button). Pages in `STANDALONE` need no solved case.
 - `_study()` is `st.cache_data`-cached on case + settings; the last solved inputs and report sit in a `st.cache_resource` store so a page opened in a new browser tab shows results without a re-run.
 - Optional bus CSV columns `x`, `y` (diagram units, y down; whole numbers = grid column/row) override the one-line layout; presets can carry `cases.COORDS`.
-- Validation happens in `_prep` (app.py owns it): friendly messages for slack count, lines to missing buses, `X = 0`, disconnected networks, non-numeric cells. Fix validation bugs there, not in `solver.py`.
+- Validation happens in `gridcore.prep_case` (`_prep` in app.py is a thin wrapper): friendly messages for slack count, lines to missing buses, `X = 0`, disconnected networks, non-numeric cells. Fix validation bugs in gridcore.py, not in `solver.py`.
 - Everything lives in `st.session_state` under stable keys; table editor keys carry a version counter so preset/upload/column-toggle switches rebuild cleanly.
 - Theme: dark only. Colours live in `theme.css` `:root`; `ui_theme.py` injects it and sets matplotlib/Plotly styles from it; `.streamlit/config.toml` is `base = "dark"` with the same colours. One accent, `--accent` #3B82F6 (active page, primary buttons, selected options, focus); `--hazard` #F2B705 rules the header; red/amber only for violations and STALE. Run `check_contrast.py` after colour changes (AA 4.5:1). Keep app.py free of styling.
 

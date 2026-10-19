@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+import gridcore
 import ui_problem
 import ui_theme
 import ui_topics
@@ -19,9 +20,8 @@ import oneline
 from cases import CASES, COORDS
 from plotting import (convergence_history, fault_voltages,
                       pv_curves, voltage_profile)
-from qlimits import solve_with_qlimits
-from solver import METHODS, solve_loadflow
-from studies import contingency, fault_analysis, outage, pv_curve
+from solver import METHODS
+from studies import fault_analysis
 
 BUS_COLS = ["Type", "V", "Pg", "Qg", "Pd", "Qd", "Bs"]
 LINE_COLS = ["From", "To", "R", "X", "B", "Tap"]
@@ -289,162 +289,20 @@ def _editors(cfg):
 
 
 def _prep(cfg):
-    b = st.session_state["bus_tbl"].copy()
-    l = st.session_state["lines_tbl"].copy()
-    l = l.dropna(subset=["From", "To"]).reset_index(drop=True)
-    b = b.dropna(subset=["Type"]).reset_index(drop=True)
-    probs, notes = [], []
-    if len(l) < len(st.session_state["lines_tbl"]):
-        notes.append("Line rows without From/To were ignored.")
-    if len(b) < len(st.session_state["bus_tbl"]):
-        notes.append("Bus rows without a Type were ignored.")
-    if not len(b):
-        probs.append("There are no buses: every row needs a Type.")
-        return b, l, probs, notes
-    bad = [i + 1 for i, t in enumerate(b["Type"].astype(str))
-           if t not in ("Slack", "PV", "PQ")]
-    if bad:
-        probs.append("Bus Type must be Slack, PV or PQ (row(s) "
-                     + ", ".join(map(str, bad)) + ").")
-
-    for c in ("V", "Pg", "Qg", "Pd", "Qd", "Bs"):
-        b[c] = _num(b, c, probs, 1.0 if c == "V" else 0.0)
-    if cfg["qlim"]:
-        b["Qmin"] = _num(b, "Qmin", probs, -9999.0)
-        b["Qmax"] = _num(b, "Qmax", probs, 9999.0)
-
-    for c in ("From", "To", "R", "X", "B", "Tap"):
-        l[c] = _num_l(l, c, probs, 1.0 if c == "Tap" else 0.0)
-
-    if not cfg["shunts"]:
-        if "Bs" in st.session_state["bus_tbl"] and \
-                pd.to_numeric(st.session_state["bus_tbl"]["Bs"],
-                              errors="coerce").fillna(0).abs().max() > 0:
-            notes.append("Bus shunts exist in the data but 'Shunt elements' "
-                         "is off; Bs = 0 was used. Turn it on to include them.")
-        b["Bs"] = 0.0
-    if "Tap" in l and not cfg["taps"]:
-        if "Tap" in st.session_state["lines_tbl"] and \
-                pd.to_numeric(st.session_state["lines_tbl"]["Tap"],
-                              errors="coerce").fillna(1).sub(1).abs().max() \
-                > 1e-9:
-            notes.append("Transformer taps exist in the data but "
-                         "'Transformer taps' is off; Tap = 1 was used. Turn "
-                         "it on to include them.")
-        l["Tap"] = 1.0
-
-    n = len(b)
-    for c in ("From", "To"):
-        frac = l[c].to_numpy(dtype=float)
-        nonint = np.flatnonzero(np.abs(frac % 1) > 1e-9)
-        if len(nonint):
-            probs.append(f"Line {c} must be whole bus numbers (rows "
-                         f"{', '.join(str(x + 1) for x in nonint)}).")
-    l["From"] = l["From"].round().astype(int)
-    l["To"] = l["To"].round().astype(int)
-
-    slacks = [i + 1 for i, t in enumerate(b["Type"]) if t == "Slack"]
-    if not slacks:
-        probs.append("No Slack bus: set exactly one bus Type to Slack.")
-    elif len(slacks) > 1:
-        probs.append("More than one Slack bus (buses " +
-                     ", ".join(map(str, slacks)) + "); exactly one required.")
-    out_of_range = []
-    for c in ("From", "To"):
-        out_of_range.extend(
-            (i + 1, int(v), c) for i, v in enumerate(l[c]) if not 1 <= v <= n)
-    if out_of_range:
-        probs.append("Lines reference buses that do not exist (buses run "
-                     "from 1 to N in row order): " + "; ".join(
-            f"row {r}: {c} = {v}" for r, v, c in sorted(out_of_range)))
-    zero_x = [f"{int(l['From'][i])}-{int(l['To'][i])}" for i in range(len(l))
-              if l["X"][i] <= 0]
-    if zero_x:
-        probs.append("Series reactance X must be greater than 0 (lines " +
-                     ", ".join(zero_x) + ").")
-
-    adj = [[] for _ in range(n)]
-    for f, t in zip(l["From"].to_numpy(dtype=int), l["To"].to_numpy(dtype=int)):
-        if 1 <= f <= n and 1 <= t <= n:
-            adj[f - 1].append(t - 1)
-            adj[t - 1].append(f - 1)
-    seen, todo = {0}, [0]
-    while todo:
-        for nb in adj[todo.pop()]:
-            if nb not in seen:
-                seen.add(nb)
-                todo.append(nb)
-    if n > 1 and len(seen) < n:
-        lost = ", ".join(str(x + 1) for x in sorted(set(range(n)) - seen))
-        probs.append(f"Network is disconnected: bus 1 cannot reach buses {lost}.")
-    return b, l, probs, notes
-
-
-def _num(df, col, probs, fill):
-    if col not in df:
-        return pd.Series(fill, index=df.index)
-    raw = df[col]
-    v = pd.to_numeric(raw, errors="coerce")
-    for pos in np.flatnonzero(v.isna().to_numpy() & raw.notna().to_numpy()):
-        probs.append(f"Bus row {pos + 1}: column {col} is not a number.")
-    return v.fillna(fill)
-
-
-def _num_l(df, col, probs, fill):
-    if col not in df:
-        return pd.Series(fill, index=df.index)
-    raw = df[col]
-    v = pd.to_numeric(raw, errors="coerce")
-    for pos in np.flatnonzero(v.isna().to_numpy() & raw.notna().to_numpy()):
-        probs.append(f"Line row {pos + 1}: column {col} is not a number.")
-    return v.fillna(fill)
+    return gridcore.prep_case(st.session_state["bus_tbl"],
+                              st.session_state["lines_tbl"], cfg)
 
 
 @st.cache_data(show_spinner="Running studies...", max_entries=32)
 def _study(b, l, method, tol, base, vmin, vmax, qlim=False):
-    """Load flow plus every study, cached on the case and settings so any
-    page or browser tab gets the same results without re-solving. With
-    qlim the main load flow enforces generator Q limits (PV -> PQ)."""
-    qlog, b_lf = [], b
-    if qlim:
-        res, flows, ok, hist, b_lf, qlog = solve_with_qlimits(b, l, method, tol)
-    else:
-        res, flows, ok, hist = solve_loadflow(b, l, method, tol)
-    rows = []
-    for m in METHODS:
-        r2, f2, ok2, h2 = solve_loadflow(b, l, m)
-        rows.append([m, ok2, len(h2) - 1,
-                     round(f2["Loss_P"].sum() * base, 4),
-                     round(r2["V (pu)"].min(), 4)])
-    cmp_df = pd.DataFrame(rows, columns=["Method", "Converged", "Iterations",
-                                         "Loss (MW)", "Min V (pu)"])
-    n1 = contingency(b, l, vmin, vmax)
-    pv = pv_curve(b, l)
-    loss = flows["Loss_P"].sum() * base
-    load = b["Pd"].sum() * base
-    k = int(np.where(b["Type"].values == "Slack")[0][0])
-    return dict(res=res, flows=flows, ok=ok, its=len(hist) - 1, hist=hist,
-                method=method, tol=tol, b=b, l=l, cmp=cmp_df,
-                n1=n1, pv=pv, loss=loss, load=load, vmin=vmin, vmax=vmax, base=base,
-                qlog=qlog, b_lf=b_lf,
-                slack_k=k + 1, slack_p=res["P_inj"].iloc[k] * base,
-                summary=(f"Method: {method}, base {base} MVA\n"
-                         + res.round(4).to_string(index=False)
-                         + f"\nTotal load: {load:.2f} MW. "
-                         + f"Total real loss: {loss:.2f} MW"
-                         + (f" ({loss / load * 100:.1f}% of load)." if load
-                            else ".")
-                         + f" Voltage limits: {vmin}-{vmax} pu."
-                         + (f"\nVoltage stability: loads can grow to "
-                            f"{pv[1]:.2f}x the base case before the load flow "
-                            f"stops solving.")
-                         + "\nWorst N-1 line outages (worst first):\n"
-                         + n1.head(3).to_string(index=False)))
+    """gridcore.run_study, cached on the case and settings so any page or
+    browser tab gets the same results without re-solving."""
+    return gridcore.run_study(b, l, method, tol, base, vmin, vmax, qlim)
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def _outage(b, l, k):
-    return outage(b, l, k)
+    return gridcore.outage(b, l, k)
 
 
 @st.cache_data(show_spinner=False, max_entries=32)

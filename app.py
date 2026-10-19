@@ -255,8 +255,8 @@ def _editors(cfg):
         st.session_state["last_taps"] = bool(cfg["taps"])
         _bump("lines")
     nb, nl = len(st.session_state["bus_tbl"]), len(st.session_state["lines_tbl"])
-    box = st.expander(f"Case data · {nb} buses, {nl} lines",
-                      expanded="out" not in st.session_state)
+    box = st.expander(f"Edit case data · {nb} buses, {nl} lines",
+                      expanded=False)
     left, right = box.columns([1.15, 1], gap="medium")
     left.html(ui_theme.section("Bus data"))
     left.caption("Per unit. Row n is bus n. Pd/Qd are positive demand, "
@@ -532,22 +532,20 @@ def _strip(out):
                         unsafe_allow_html=True)
         st.caption(f"{out['method']} · {out['its']} iterations · "
                    f"tol {out['tol']:g} · base {out['base']:g} MVA")
-    cols = st.columns(6)
+    cols = st.columns(4)
     vmin_ok = out["res"]["V (pu)"].min() >= out["vmin"]
     vmax_ok = out["res"]["V (pu)"].max() <= out["vmax"]
     loss = out["loss"]
     loss_pct = (loss / out["load"] * 100) if out["load"] else None
     _card(cols[0], 0, "plain", f"Slack P · bus {out['slack_k']}",
-          f"{out['slack_p']:.1f} MW")
-    _card(cols[1], 1, "plain", "Total generation",
-          f"{out['load'] + out['loss']:.1f} MW")
-    _card(cols[2], 2, "plain", "Total load", f"{out['load']:.1f} MW")
-    _card(cols[3], 3, "plain", "Losses", f"{loss:.1f} MW",
+          f"{out['slack_p']:.1f} MW",
+          delta=f"load {out['load']:.1f} MW")
+    _card(cols[1], 1, "plain", "Losses", f"{loss:.1f} MW",
           delta=f"{loss_pct:.1f}% of load" if loss_pct is not None else None)
-    _card(cols[4], 4, "ok" if vmin_ok else "bad", "Min |V| · bus "
+    _card(cols[2], 2, "ok" if vmin_ok else "bad", "Min |V| · bus "
           f"{int(out['res'].loc[out['res']['V (pu)'].idxmin(), 'Bus'])}",
           f"{out['res']['V (pu)'].min():.3f} pu")
-    _card(cols[5], 5, "ok" if vmax_ok else "bad", "Max |V| · bus "
+    _card(cols[3], 3, "ok" if vmax_ok else "bad", "Max |V| · bus "
           f"{int(out['res'].loc[out['res']['V (pu)'].idxmax(), 'Bus'])}",
           f"{out['res']['V (pu)'].max():.3f} pu")
 
@@ -558,7 +556,7 @@ def _plot(fig, alt, where=st):
     plt.close(fig)
 
 
-def _tab_loadflow(out):
+def _bus_report(out):
     b, res, base = out["b"], out["res"], out["base"]
     rep = pd.DataFrame({
         "Bus": res["Bus"], "Type": b["Type"].values,
@@ -572,26 +570,73 @@ def _tab_loadflow(out):
     rep["Status"] = np.where(rep["V (pu)"] < out["vmin"], "LOW V",
                              np.where(rep["V (pu)"] > out["vmax"], "HIGH V",
                                       "ok"))
-    left, right = st.columns([1.35, 1], gap="large")
-    left.html(ui_theme.section("Bus report"))
-    left.dataframe(rep.round({"V (pu)": 4, "Angle (deg)": 2, "P gen (MW)": 1,
-                              "Q gen (MVAr)": 1, "P load (MW)": 1,
-                              "Q load (MVAr)": 1}), hide_index=True)
-    right.html(ui_theme.section("Voltage profile"))
-    _plot(voltage_profile(res, out["vmin"], out["vmax"]),
-          "Bus voltage profile", right)
-    fl = out["flows"]
+    return rep.round({"V (pu)": 4, "Angle (deg)": 2, "P gen (MW)": 1,
+                      "Q gen (MVAr)": 1, "P load (MW)": 1, "Q load (MVAr)": 1})
+
+
+def _branch_report(out):
+    base, fl = out["base"], out["flows"]
     br = pd.DataFrame({
         "From": fl["From"], "To": fl["To"],
         "P from (MW)": fl["P_ij"] * base, "Q from (MVAr)": fl["Q_ij"] * base,
         "P to (MW)": fl["P_ji"] * base, "Q to (MVAr)": fl["Q_ji"] * base,
         "Loss (MW)": fl["Loss_P"] * base, "Loss (MVAr)": fl["Loss_Q"] * base})
-    left, right = st.columns([1.35, 1], gap="large")
-    left.html(ui_theme.section("Branch report"))
-    left.dataframe(br.round(2), hide_index=True)
-    right.html(ui_theme.section(f"Mismatch convergence · {out['method']}"))
+    return br.round(2)
+
+
+@st.dialog("Bus report", width="large")
+def _dlg_bus(out):
+    st.dataframe(_bus_report(out), hide_index=True)
+
+
+@st.dialog("Branch report", width="large")
+def _dlg_branch(out):
+    st.dataframe(_branch_report(out), hide_index=True)
+
+
+@st.dialog("Voltage profile", width="large")
+def _dlg_voltage(out):
+    _plot(voltage_profile(out["res"], out["vmin"], out["vmax"]),
+          "Bus voltage profile")
+
+
+@st.dialog("Convergence", width="large")
+def _dlg_conv(out):
+    st.caption(f"Max power mismatch per iteration, {out['method']}.")
     _plot(convergence_history(out["hist"]),
-          f"Mismatch error per iteration, {out['method']}", right)
+          f"Mismatch error per iteration, {out['method']}")
+
+
+def _violations(out):
+    """Short list of voltage limit violations in the base case."""
+    res = out["res"]
+    v = res["V (pu)"]
+    bad = res[(v < out["vmin"]) | (v > out["vmax"])]
+    if bad.empty:
+        st.html('<div class="gl-ok">No voltage violations in the base case '
+                f'({out["vmin"]:.2f}\u2013{out["vmax"]:.2f} pu).</div>')
+        return
+    st.html(ui_theme.section("Base-case violations"))
+    for _, r in bad.iterrows():
+        lim = out["vmin"] if r["V (pu)"] < out["vmin"] else out["vmax"]
+        st.html(f'<div class="gl-bad">Bus {int(r["Bus"])}: '
+                f'{r["V (pu)"]:.4f} pu '
+                f'({"below" if r["V (pu)"] < lim else "above"} {lim:.2f})</div>')
+
+
+def _tab_loadflow(out):
+    """Dashboard body: verdict first, details one click away."""
+    _violations(out)
+    st.html(ui_theme.section("Details"))
+    c = st.columns(4)
+    if c[0].button("Bus report", width="stretch", key="d_bus"):
+        _dlg_bus(out)
+    if c[1].button("Branch report", width="stretch", key="d_br"):
+        _dlg_branch(out)
+    if c[2].button("Voltage profile", width="stretch", key="d_v"):
+        _dlg_voltage(out)
+    if c[3].button("Convergence", width="stretch", key="d_c"):
+        _dlg_conv(out)
 
 
 LAYERS = (("Flows (MW)", "flows", False), ("Angles", "angles", False),
@@ -655,8 +700,20 @@ def _tab_cmp(out):
 def _tab_n1(out):
     st.caption("Each line removed in turn, case re-solved (Newton-Raphson), "
                "ranked worst first.")
-    st.html(ui_theme.section("Contingency ranking"))
-    st.dataframe(out["n1"], hide_index=True)
+    n1 = out["n1"]
+    bad = int((n1["Status"].eq("FAILED")
+               | (pd.to_numeric(n1["Violations"], errors="coerce")
+                  .fillna(0) > 0)).sum())
+    worst = n1.iloc[0]
+    st.html(f'<div class="{"gl-bad" if bad else "gl-ok"}">'
+            + (f"{bad} of {len(n1)} single-line outages are insecure; worst: "
+               f"line {worst['Outage']}, minimum {worst['Min V (pu)']} pu at "
+               f"bus {worst['At bus']}." if bad else
+               f"All {len(n1)} single-line outages are secure.") + "</div>")
+    t_rank, t_viol, t_expl = st.tabs(["Ranking", "Limit violations",
+                                      "Explorer"])
+    with t_rank:
+        st.dataframe(n1, hide_index=True)
     rows = []
     l = out["l"]
     for _, c in out["n1"].iterrows():
@@ -674,14 +731,18 @@ def _tab_n1(out):
             rows.append([c["Outage"], f"Bus {bb}", round(vv, 4),
                          f"{lim:.2f}", "Low voltage" if vv < lim else
                          "High voltage"])
-    st.html(ui_theme.section("Limit violation report"))
-    if rows:
-        st.dataframe(pd.DataFrame(rows, columns=[
-            "Contingency", "Monitored element", "Value (pu)", "Limit (pu)",
-            "Violation"]), hide_index=True)
-    else:
-        st.caption("No post-contingency limit violations.")
-    st.html(ui_theme.section("Contingency explorer"))
+    with t_viol:
+        if rows:
+            st.dataframe(pd.DataFrame(rows, columns=[
+                "Contingency", "Monitored element", "Value (pu)",
+                "Limit (pu)", "Violation"]), hide_index=True)
+        else:
+            st.caption("No post-contingency limit violations.")
+    with t_expl:
+        _n1_explorer(out)
+
+
+def _n1_explorer(out):
     l = out["l"]
     names = [f"{int(f)}-{int(t)}" for f, t in zip(l["From"], l["To"])]
     k = st.selectbox("Trip line", range(len(l)), format_func=lambda i: names[i],
@@ -922,7 +983,7 @@ def main():
                        layout="wide")
     pg = st.navigation({group: [_page(*p) for p in pages]
                         for group, pages in PAGES.items()},
-                       position="sidebar", expanded=True)
+                       position="top")
     _init()
     ui_theme.inject()
     cfg = _sidebar()

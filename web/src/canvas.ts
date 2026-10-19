@@ -1,13 +1,16 @@
+// Diagram canvas (D3).
+// Sections follow the order of the files this one replaced; search for '// ----'.
+import * as d3 from "d3";
+import { caseSig, getState, post, report, setState, subscribe, type CaseData, type Rec, type State } from "./app";
+import { registerDoc } from "./documents";
+import { h } from "./ui";
+
+// ---- canvas ------------------------------------------------------------
+
 // One-line diagram (D3). Positions and branch routes come from
 // /api/layout (oneline.layout, the same as the Streamlit diagram); bus
 // colours from the last results. Wheel = zoom, drag = pan, Fit (Ctrl+0),
 // click a bus or line to select it.
-import * as d3 from "d3";
-import { post, type Rec } from "./api";
-import { report } from "./actions";
-import { registerDoc } from "./docs";
-import { h } from "./shell";
-import { caseSig, getState, setState, subscribe, type CaseData, type State } from "./state";
 
 interface Layout { cx: number[]; cy: number[]; w: number[]; routes: [number, number][][] }
 

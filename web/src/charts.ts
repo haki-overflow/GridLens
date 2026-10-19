@@ -1,5 +1,10 @@
-// D3 line chart (P-V curves). Colours from the token palette.
+// Charts: stacked plots and phasor diagrams (D3).
+// Sections follow the order of the files this one replaced; search for '// ----'.
 import * as d3 from "d3";
+
+// ---- charts ------------------------------------------------------------
+
+// D3 line chart (P-V curves). Colours from the token palette.
 
 export interface Series { name: string; y: number[] }
 const PALETTE = ["--c1", "--c2", "--c3", "--c4", "--c5", "--c6"];

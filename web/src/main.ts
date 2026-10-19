@@ -1,16 +1,14 @@
+// Entry point.
+// Sections follow the order of the files this one replaced; search for '// ----'.
 import "./tokens.css";
 import "./workspace.css";
-import "./views";
 import "./canvas";
-import { mountBusy } from "./busy";
-import { mountChrome } from "./chrome";
-import { DOC_TITLES, lookupDoc } from "./docs";
-import { currentDoc, onRoute } from "./router";
-import { buildShell } from "./shell";
-import { getState, setState } from "./state";
-import { DocTabs } from "./tabs";
-import { mountToolbar } from "./toolbar";
-import { mountTree } from "./tree";
+import { currentDoc, getState, mountBusy, onRoute, setState } from "./app";
+import { DOC_TITLES, lookupDoc } from "./documents";
+import { mountTree } from "./panels";
+import { DocTabs, buildShell, mountChrome, mountToolbar } from "./shell";
+
+// ---- main --------------------------------------------------------------
 
 const shell = buildShell(document.getElementById("app")!);
 mountBusy(shell.busy);

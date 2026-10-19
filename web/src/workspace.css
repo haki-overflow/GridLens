@@ -402,3 +402,7 @@ pre.answer.wrap { white-space: pre-wrap; }
   border: 1px solid var(--border); cursor: pointer; }
 .pbtn:hover { border-color: var(--accent); }
 .pbtn.danger:hover { border-color: var(--red); color: var(--red); }
+
+/* keyboard focus is always visible */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.flow-item:focus-visible { outline-offset: -2px; }

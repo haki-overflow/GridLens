@@ -216,3 +216,14 @@ cd web && npm run dev       # front-end dev server (proxies /api to :8000)
 
 ## v1.4: simpler navigation
 The workspace now opens on a Start screen (example, textbook data, or file) and a six-step workflow list replaces the long project tree. Same solver and numbers as v1.3. Check it with `python tools/walkthrough.py`.
+
+## v1.5: using it in three steps
+1. **Pick a case.** Choose an example, enter textbook data (MVA, kV, ohms), or open a saved project.
+
+   ![Start screen](docs/1-start.png)
+2. **Run.** Press Run (F5). The diagram shows bus voltages; click a bus or line to edit it, or use Add bus / Add line in the Properties panel.
+
+   ![Solved diagram](docs/2-diagram.png)
+3. **Work down the list on the left.** Solve (results, profile plots), Safety check (N-1, PV curve; click an N-1 row to see that outage), Short circuit (3-phase and SLG/LL/DLG with editable sequence data), Show working, Tools.
+
+   ![Safety check](docs/3-safety.png)

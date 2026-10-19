@@ -323,7 +323,7 @@ export async function run(): Promise<void> {
     const loss = out.loss.toFixed(3);
     log(out.ok ? "ok" : "error", out.ok
       ? `Solved in ${out.its} iterations. Losses ${loss} MW, slack P ${out.slack_p.toFixed(3)} MW.`
-      : `Load flow did not converge after ${out.its} iterations.`);
+      : `Load flow did not converge after ${out.its} iterations. Check the loads and line data, try Newton-Raphson, or open the PV curve to see how close the case is to its limit.`);
   } catch (e) {
     report(e, "The study");
   } finally {

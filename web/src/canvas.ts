@@ -97,7 +97,7 @@ registerDoc("canvas", (el) => {
       b.classList.toggle("on", on);
       b.setAttribute("aria-pressed", String(on));
     }
-    if (!layout || !s.case) {
+    if (!layout || !s.case || layout.cx.length !== s.case.bus.length) {
       gBranch.selectAll("*").remove();
       gBus.selectAll("*").remove();
       gText.selectAll("*").remove();
@@ -255,6 +255,8 @@ registerDoc("canvas", (el) => {
         fitted = wrap.getBoundingClientRect().width > 10;
       }
     } catch (e) {
+      layout = null;
+      draw(getState());
       report(e, "The diagram layout");
     }
   };

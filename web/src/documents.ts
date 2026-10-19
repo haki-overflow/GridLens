@@ -256,6 +256,9 @@ apiDoc("fault-levels", "Quick short circuit (3-phase)", "Three-phase fault curre
   });
 
 // ----------------------------------------------------- unsymmetrical faults
+let seqOverride: { gens?: Rec[]; branches?: Rec[] } = {};
+let seqRefresh: () => void = () => {};
+
 apiDoc("faults", "Detailed short circuit (SLG, LL, DLG)", "SLG, LL, DLG and three-phase faults from sequence networks.",
   (row, refresh, c) => {
     const kind = selectIn(["3-phase", "SLG", "LL", "DLG"], "SLG");
@@ -265,8 +268,10 @@ apiDoc("faults", "Detailed short circuit (SLG, LL, DLG)", "SLG, LL, DLG and thre
     row.append(field("Fault type", kind), field("Fault bus", bus), field("Zf R (pu)", zr),
       field("Zf X (pu)", zx), field("Prefault", pre));
     for (const i of [kind, bus, zr, zx, pre]) i.addEventListener("change", refresh);
+    seqRefresh = refresh;
+    seqOverride = {};
     return () => ({ kind: kind.value, bus: Number(bus.value), zf: { re: Number(zr.value), im: Number(zx.value) },
-      prefault: pre.value });
+      prefault: pre.value, ...seqOverride });
   },
   "/api/seqfault", (el, d, _c, req) => {
     const kA = d.kA as number[], I = d.Iabc as Rec[], kv = d.kv as number[];
@@ -281,13 +286,20 @@ apiDoc("faults", "Detailed short circuit (SLG, LL, DLG)", "SLG, LL, DLG and thre
       { "": "Phase a / b / c (kA)", "0 / a": kA[0], "1 / b": kA[1], "2 / c": kA[2] },
     ]), section(`${req.kind} fault level at every bus`), table(d.table as Rec[]));
     const V = d.V012 as Rec[][], Vp = d.Vabc as Rec[][];
+    const mag = (z?: Rec) => Math.hypot(n(z?.re), n(z?.im));
+    p2!.append(stackedPlot(V.map((_, i) => i + 1), [{ yLabel: "Phase |V| (pu)", digits: 3, series: [
+      { name: "Va", y: Vp.map((v) => mag(v[0])) }, { name: "Vb", y: Vp.map((v) => mag(v[1])) },
+      { name: "Vc", y: Vp.map((v) => mag(v[2])) }] }], { xLabel: "Bus number", panelHeight: 220 }));
     p2!.append(table(V.map((v, i) => ({ Bus: i + 1, V0: v[0], V1: v[1], V2: v[2],
       Va: Vp[i]?.[0], Vb: Vp[i]?.[1], Vc: Vp[i]?.[2] }))));
     p3!.append(table(d.lines as Rec[]));
     const Z = d.Zth as Rec[];
+    const gens = d.gens as Rec[], brs = d.branches as Rec[];
+    const apply = () => { seqOverride = { gens, branches: brs }; seqRefresh(); };
     p4!.append(table([{ "Z1 (pu)": Z[1], "Z2 (pu)": Z[2], "Z0 (pu)": Z[0] }]),
-      section("Generators"), table(d.gens as Rec[]), section("Lines and transformers"),
-      table(d.branches as Rec[]));
+      h("p", "cap", "Edit the sequence reactances below; the fault is recalculated."),
+      section("Generators"), rowEditor(gens, Object.keys(gens[0] ?? {}), apply),
+      section("Lines and transformers"), rowEditor(brs, Object.keys(brs[0] ?? {}), apply));
   });
 
 // ---------------------------------------------------------------------- ybus
@@ -516,10 +528,12 @@ calcDoc("dispatch", "Economic dispatch", "Least-cost generation at equal increme
     const lim = selectIn(["On", "Off"], "On");
     row.append(field("Demand PD (MW)", pd), field("Losses", loss), field("Unit limits", lim));
     for (const i of [pd, loss, lim]) i.addEventListener("change", refresh);
-    const units = [
+    const units: Rec[] = [
       { a: 200, b: 7.0, c: 0.008, Pmin: 10, Pmax: 85 },
       { a: 180, b: 6.3, c: 0.009, Pmin: 10, Pmax: 80 },
       { a: 140, b: 6.8, c: 0.007, Pmin: 10, Pmax: 70 }];
+    row.after(h("p", "cap", "Units: cost = a + b·P + c·P² ($/h, P in MW). Edit any value; the B-coefficient matrix assumes 3 units."),
+      rowEditor(units, ["a", "b", "c", "Pmin", "Pmax"], () => void refresh()));
     return () => ({ units, PD: Number(pd.value), use_limits: lim.value === "On",
       ...(loss.value === "None" ? {} : {
         B: [[0.0218, 0.0093, 0.0028], [0.0093, 0.0228, 0.0017], [0.0028, 0.0017, 0.0179]],
@@ -532,6 +546,54 @@ calcDoc("dispatch", "Economic dispatch", "Least-cost generation at equal increme
     p1!.append(table(d.table as Rec[]));
     p2!.append(table(d.its as Rec[], { maxHeight: 480 }));
   });
+
+// ---- small editable table (dispatch units, sequence data) ---------------
+
+/** Edits `rows` in place; numbers stay numbers, text stays text. */
+function rowEditor(rows: Rec[], cols: string[], onChange: () => void, addable = false): HTMLElement {
+  const wrap = h("div", "wz-table");
+  const draw = () => {
+    const tb = h("table", "grid");
+    tb.append(Object.assign(h("tr"), {}));
+    const head = h("tr");
+    head.append(...cols.map((c) => h("th", "", c)), ...(addable ? [h("th", "", "")] : []));
+    tb.replaceChildren(head);
+    rows.forEach((r, i) => {
+      const tr = h("tr");
+      for (const c of cols) {
+        const td = h("td", "s");
+        const cur = r[c];
+        const inp = h("input");
+        inp.value = String(cur ?? "");
+        inp.style.width = typeof cur === "string" ? "92px" : "70px";
+        inp.addEventListener("change", () => {
+          if (typeof cur === "string") r[c] = inp.value;
+          else if (Number.isFinite(Number(inp.value))) r[c] = Number(inp.value);
+          else { inp.classList.add("bad"); return; }
+          onChange();
+        });
+        td.append(inp);
+        tr.append(td);
+      }
+      if (addable) {
+        const del = h("button", "btn", "×");
+        del.addEventListener("click", () => { rows.splice(i, 1); draw(); onChange(); });
+        tr.append(h("td", "")); tr.lastElementChild!.append(del);
+      }
+      tb.append(tr);
+    });
+    wrap.replaceChildren(tb);
+    if (addable) {
+      const add = h("button", "btn", "+ Add row");
+      add.addEventListener("click", () => {
+        rows.push({ ...(rows[rows.length - 1] ?? {}) }); draw(); onChange();
+      });
+      wrap.append(add);
+    }
+  };
+  draw();
+  return wrap;
+}
 
 // ---- wizard ------------------------------------------------------------
 

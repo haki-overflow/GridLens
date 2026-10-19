@@ -116,6 +116,37 @@ function editSettings(c: CaseData, patch: Partial<Settings>): void {
   setState({ case: { ...c, settings: { ...c.settings, ...patch } } });
 }
 
+/** Add / remove buses and lines. Deleting a bus drops its lines and renumbers the rest. */
+function addBus(c: CaseData): void {
+  const xs = c.bus.map((b) => Number(b.x)).filter((v) => !Number.isNaN(v));
+  const ys = c.bus.map((b) => Number(b.y)).filter((v) => !Number.isNaN(v));
+  const nb: Rec = { Type: "PQ", V: 1, Pg: 0, Qg: 0, Pd: 0, Qd: 0, Bs: 0 };
+  if (xs.length === c.bus.length && xs.length) {
+    nb.x = Math.max(...xs) + 4.001;
+    nb.y = Math.max(...ys) + 0.001;
+  }
+  setState({ case: { ...c, bus: [...c.bus, nb] }, selection: { kind: "bus", index: c.bus.length } });
+}
+function addLine(c: CaseData): void {
+  const nl: Rec = { From: 1, To: Math.min(2, c.bus.length), R: 0.01, X: 0.1, B: 0, Tap: 1 };
+  setState({ case: { ...c, lines: [...c.lines, nl] }, selection: { kind: "branch", index: c.lines.length } });
+}
+function delLine(c: CaseData, i: number): void {
+  setState({ case: { ...c, lines: c.lines.filter((_, k) => k !== i) }, selection: null, outage: null });
+}
+function delBus(c: CaseData, i: number): void {
+  const fix = (v: unknown) => (Number(v) > i + 1 ? Number(v) - 1 : Number(v));
+  const lines = c.lines.filter((l) => Number(l.From) !== i + 1 && Number(l.To) !== i + 1)
+    .map((l) => ({ ...l, From: fix(l.From), To: fix(l.To) }));
+  setState({ case: { ...c, bus: c.bus.filter((_, k) => k !== i), lines }, selection: null, outage: null });
+}
+function actionBtn(label: string, fn: () => void, danger = false): HTMLElement {
+  const b = h("button", `pbtn${danger ? " danger" : ""}`, label);
+  b.type = "button";
+  b.addEventListener("click", fn);
+  return b;
+}
+
 function readonly(pairs: [string, string, string?][]): HTMLElement {
   const box = h("div", "prows");
   for (const [k, v, u] of pairs) {
@@ -145,7 +176,9 @@ function projectPanel(c: CaseData): HTMLElement {
     row("Generator Q limits", checkInput(st.qlim, (v) => editSettings(c, { qlim: v }))),
     row("Transformer taps", checkInput(st.taps, (v) => editSettings(c, { taps: v }))),
     row("Bus shunts", checkInput(st.shunts, (v) => editSettings(c, { shunts: v }))));
-  box.append(g1, g2, g3, h("div", "empty", "Pick a bus or line above, or click it on the diagram, to edit it."));
+  const acts = h("div", "pacts");
+  acts.append(actionBtn("+ Add bus", () => addBus(c)), actionBtn("+ Add line", () => addLine(c)));
+  box.append(g1, g2, g3, acts, h("div", "empty", "Pick a bus or line above, or click it on the diagram, to edit it."));
   return box;
 }
 
@@ -163,6 +196,9 @@ function busPanel(c: CaseData, i: number, s: State): HTMLElement {
     row("Qd", numInput(b.Qd, ed("Qd")), "pu"),
     row("Shunt Bs", numInput(b.Bs ?? 0, ed("Bs")), "pu"));
   box.append(g);
+  const acts = h("div", "pacts");
+  acts.append(actionBtn(`Delete bus ${i + 1}`, () => delBus(c, i), true));
+  box.append(acts);
   if (c.settings.qlim) {
     const [gq, bq] = group("Generator limits");
     bq.append(row("Q min", numInput(b.Qmin, ed("Qmin")), "pu"), row("Q max", numInput(b.Qmax, ed("Qmax")), "pu"));
@@ -195,6 +231,9 @@ function linePanel(c: CaseData, i: number, s: State): HTMLElement {
     row("B charging", numInput(l.B, ed("B")), "pu"),
     row("Tap", numInput(l.Tap ?? 1, ed("Tap"), 3), "ratio"));
   box.append(g);
+  const acts = h("div", "pacts");
+  acts.append(actionBtn(`Delete line ${l.From}-${l.To}`, () => delLine(c, i), true));
+  box.append(acts);
   const r = s.results && !isStale(s) ? s.results : null;
   const f = r?.flows[i] as Rec | undefined;
   if (f && r) {

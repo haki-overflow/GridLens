@@ -147,6 +147,48 @@ def _cfg():
     return cfg
 
 
+def _settings(adv):
+    """Method, limits, base (Standard) plus taps / shunts / Q limits /
+    tolerance (Advanced), inside the sidebar's Study settings group."""
+    st.selectbox(
+        "Method", METHODS, key="method",
+        help="Newton-Raphson: quadratic, most robust. Fast "
+             "Decoupled: XB approximation, quadratic-ish. "
+             "Gauss-Seidel: linear convergence.")
+    cl, cr = st.columns(2)
+    cl.number_input("Vmin (pu)", 0.5, 1.5, 0.95, step=0.01,
+                    key="vmin",
+                    help="Lower voltage limit for violation "
+                         "tracking (per unit).")
+    cr.number_input("Vmax (pu)", 0.5, 1.5, 1.10, step=0.01,
+                    key="vmax",
+                    help="Upper voltage limit for violation "
+                         "tracking (per unit).")
+    st.number_input("Base MVA", 1.0, 10000.0,
+                    float(st.session_state["_base"]), step=1.0,
+                    key="base", on_change=lambda: st.session_state.update(
+                        _base=st.session_state["base"]),
+                    help="System base power; per-unit results "
+                         "convert to MW/MVAr with this.")
+    if adv:
+        st.toggle("Transformer taps", key="taps",
+                  help="Show the line Tap column (off-nominal ratio, "
+                       "1 = none). When off, Tap = 1 is used.")
+        st.toggle("Shunt elements", key="shunts",
+                  help="Show the bus Bs column (shunt susceptance). "
+                       "When off, Bs = 0 is used.")
+        st.toggle("Generator Q limits", key="qlim",
+                  help="Show bus Qmin/Qmax (pu generation limits). A PV "
+                       "bus that needs more Q than its limit becomes PQ "
+                       "at the limit. Off: no limits (results as before).")
+        st.number_input("Solver tolerance", 1e-12, 1e-3, DEFAULTS["tol"],
+                        format="%g",
+                        key="tol",
+                        help="Power-mismatch convergence threshold "
+                             "(per unit). Note: Gauss-Seidel uses its "
+                             "own default tolerance.")
+
+
 def _sidebar():
     with st.sidebar:
         st.header("Mode")
@@ -185,44 +227,8 @@ def _sidebar():
                                    mime="text/csv", key=f"tpl_{name}")
 
         if std:
-            st.header("Solver")
-            st.selectbox(
-                "Method", METHODS, key="method",
-                help="Newton-Raphson: quadratic, most robust. Fast "
-                     "Decoupled: XB approximation, quadratic-ish. "
-                     "Gauss-Seidel: linear convergence.")
-            cl, cr = st.columns(2)
-            cl.number_input("Vmin (pu)", 0.5, 1.5, 0.95, step=0.01,
-                            key="vmin",
-                            help="Lower voltage limit for violation "
-                                 "tracking (per unit).")
-            cr.number_input("Vmax (pu)", 0.5, 1.5, 1.10, step=0.01,
-                            key="vmax",
-                            help="Upper voltage limit for violation "
-                                 "tracking (per unit).")
-            st.number_input("Base MVA", 1.0, 10000.0,
-                            float(st.session_state["_base"]), step=1.0,
-                            key="base", on_change=lambda: st.session_state.update(
-                                _base=st.session_state["base"]),
-                            help="System base power; per-unit results "
-                                 "convert to MW/MVAr with this.")
-        if adv:
-            st.toggle("Transformer taps", key="taps",
-                      help="Show the line Tap column (off-nominal ratio, "
-                           "1 = none). When off, Tap = 1 is used.")
-            st.toggle("Shunt elements", key="shunts",
-                      help="Show the bus Bs column (shunt susceptance). "
-                           "When off, Bs = 0 is used.")
-            st.toggle("Generator Q limits", key="qlim",
-                      help="Show bus Qmin/Qmax (pu generation limits). A PV "
-                           "bus that needs more Q than its limit becomes PQ "
-                           "at the limit. Off: no limits (results as before).")
-            st.number_input("Solver tolerance", 1e-12, 1e-3, DEFAULTS["tol"],
-                            format="%g",
-                            key="tol",
-                            help="Power-mismatch convergence threshold "
-                                 "(per unit). Note: Gauss-Seidel uses its "
-                                 "own default tolerance.")
+            with st.expander("Study settings", expanded=False):
+                _settings(adv)
     return _cfg()
 
 
@@ -452,6 +458,11 @@ def _inputs_sig(cfg):
          for k in ("bus_tbl", "lines_tbl")]
     return tuple(h) + tuple(cfg[k] for k in ("method", "tol", "base", "vmin",
                                               "vmax", "taps", "shunts", "qlim"))
+
+
+def _stale(cfg):
+    out = st.session_state.get("out")
+    return out is not None and st.session_state.get("run_sig") != _inputs_sig(cfg)
 
 
 def _case_label():
@@ -836,21 +847,23 @@ def _tab_dashboard(out):
     _tab_loadflow(out)
 
 
-PAGES = (("Dashboard", "dashboard", _tab_dashboard),
-         ("Problem input", "problem", _tab_problem),
-         ("Network diagram", "network", _tab_network),
-         ("Ybus matrix", "ybus", ui_working.page_ybus),
-         ("Iterations", "iterations", ui_working.page_iterations),
-         ("Worked answer", "answer", _tab_answer),
-         ("Solver check", "solver-check", _tab_cmp),
-         ("Contingency N-1", "contingency", _tab_n1),
-         ("PV analysis", "pv-analysis", _tab_pv),
-         ("Fault levels", "fault-levels", _tab_sc),
-         ("Unsymmetrical faults", "faults", ui_topics.page_seqfault),
-         ("Economic dispatch", "dispatch", ui_topics.page_dispatch),
-         ("Symmetrical components", "symmetrical", ui_topics.page_symcomp),
-         ("Line parameters", "line", ui_topics.page_tline),
-         ("Study report", "study-report", _tab_ai))
+PAGES = {
+    "Load flow": (("Dashboard", "dashboard", _tab_dashboard),
+                  ("Problem input", "problem", _tab_problem),
+                  ("Network diagram", "network", _tab_network),
+                  ("Solver check", "solver-check", _tab_cmp)),
+    "Worked solution": (("Ybus matrix", "ybus", ui_working.page_ybus),
+                        ("Iterations", "iterations", ui_working.page_iterations),
+                        ("Worked answer", "answer", _tab_answer)),
+    "Studies": (("Contingency N-1", "contingency", _tab_n1),
+                ("PV analysis", "pv-analysis", _tab_pv),
+                ("Fault levels", "fault-levels", _tab_sc),
+                ("Unsymmetrical faults", "faults", ui_topics.page_seqfault),
+                ("Economic dispatch", "dispatch", ui_topics.page_dispatch)),
+    "Calculators": (("Symmetrical components", "symmetrical", ui_topics.page_symcomp),
+                    ("Line parameters", "line", ui_topics.page_tline)),
+    "Report": (("Study report", "study-report", _tab_ai),),
+}
 
 
 STANDALONE = {"problem", "dispatch", "symmetrical", "line"}
@@ -860,14 +873,22 @@ def _page(title, path, body):
     """One study page: header strip with an open-in-new-tab link, then the
     page body (the Dashboard also holds the case editors)."""
     def run():
-        with st.container(horizontal=True, vertical_alignment="center",
-                          horizontal_alignment="distribute"):
+        cfg = st.session_state["cfg"]
+        out = st.session_state.get("out")
+        results = path not in STANDALONE and path != "dashboard"
+        with st.container(horizontal=True, vertical_alignment="center"):
             st.html(f'<div class="gl-page">{title}</div>')
+            st.space("stretch")
+            rerun = st.button("Re-run study", type="primary",
+                              key=f"rerun_{path}", width="content",
+                              help="Solve the current case again and refresh "
+                                   "every page.") if results else False
             st.link_button("Open in new tab",       # default page lives at /
                            "./" if path == "dashboard" else f"./{path}",
                            width="content")
-        cfg = st.session_state["cfg"]
-        out = st.session_state.get("out")
+        if rerun:
+            _solve(cfg)
+            st.rerun()
         if path in STANDALONE:          # tools that need no solved case
             body(out)
             return
@@ -883,8 +904,12 @@ def _page(title, path, body):
             if run:
                 _solve(cfg)
                 st.rerun()
-        elif out is None or st.session_state.get("run_sig") != _inputs_sig(cfg):
-            st.caption("Results out of date. Run study on the Dashboard.")
+        elif out is None:
+            st.html('<div class="gl-stale">No results yet: press Re-run study '
+                    '(or Run study on the Dashboard).</div>')
+        elif _stale(cfg):
+            st.html('<div class="gl-stale">STALE: the case or settings changed '
+                    'since the last run. Re-run study to update this page.</div>')
         if out:
             body(out)
     run.__name__ = f"page_{path.replace('-', '_')}"
@@ -895,7 +920,8 @@ def _page(title, path, body):
 def main():
     st.set_page_config(page_title="GridLens - Power System Analysis",
                        layout="wide")
-    pg = st.navigation({"Pages": [_page(*p) for p in PAGES]},
+    pg = st.navigation({group: [_page(*p) for p in pages]
+                        for group, pages in PAGES.items()},
                        position="sidebar", expanded=True)
     _init()
     ui_theme.inject()
@@ -903,14 +929,7 @@ def main():
     st.session_state["cfg"] = cfg
 
     out = st.session_state.get("out")
-    st.html(ui_theme.banner_html([
-        ("Case", st.session_state.get("case_label") or _case_label()),
-        ("Buses / branches", f"{len(st.session_state['bus_tbl'])} / "
-                             f"{len(st.session_state['lines_tbl'])}"),
-        ("Base", f"{(out or cfg)['base']:g} MVA"),
-        ("Limits", f"{(out or cfg)['vmin']:.2f}-{(out or cfg)['vmax']:.2f} pu"),
-        ("Solution", ("SOLVED" if out["ok"] else "NOT SOLVED") if out
-         else "—")]))
+    head = st.empty()       # filled after the page ran (its edits count)
     st.html(ui_theme.statusbar_html(
         [("Solver", out["method"] if out else "-"),
          ("Iterations", out["its"] if out else "-"),
@@ -930,6 +949,16 @@ def main():
         st.sidebar.error(". ".join(errs))
 
     pg.run()
+    out = st.session_state.get("out")
+    sol = ("—", "") if out is None else ("STALE", "stale") if _stale(cfg) \
+        else ("SOLVED" if out["ok"] else "NOT SOLVED", "")
+    head.html(ui_theme.banner_html([
+        ("Case", st.session_state.get("case_label") or _case_label()),
+        ("Buses / branches", f"{len(st.session_state['bus_tbl'])} / "
+                             f"{len(st.session_state['lines_tbl'])}"),
+        ("Base", f"{cfg['base']:g} MVA"),
+        ("Limits", f"{cfg['vmin']:.2f}-{cfg['vmax']:.2f} pu"),
+        ("Solution", *sol)]))
 
 
 if __name__ == "__main__":

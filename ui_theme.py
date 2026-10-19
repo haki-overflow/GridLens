@@ -3,8 +3,9 @@ palette dict, matplotlib rcParams and the Plotly template.
 
 Roles, not decoration:
 - text/muted  = body and secondary text
-- sel/marker  = selected state in UI chrome (greyscale, no blue)
-- accent      = charts only (diagram selection highlight)
+- accent      = the one strong accent: active page, primary buttons,
+                selected options, focus (accent_strong = primary fill)
+- hazard      = yellow rule under the header
 - green/amber/red = status only (badges, violations, pass/fail), each with a
   dark tinted background and same-hue text that passes WCAG AA
 - c1..c6      = plot data colours
@@ -34,6 +35,10 @@ CONTRAST_PAIRS = [
     ("Body text on input field", "text", "field"),
     ("Body text on title strip", "text", "hdr"),
     ("Selected text on selected fill", "sel_text", "sel"),
+    ("Primary button text on its fill", "accent_fg", "accent_strong"),
+    ("Title on header band", "sel_text", "hdr"),
+    ("STALE / amber on header band", "amber", "hdr"),
+    ("Amber note on app background", "amber", "bg"),
     ("Body text on hover", "text", "hover"),
     ("Secondary text on app background", "muted", "bg"),
     ("Secondary text on panel", "muted", "panel"),
@@ -48,8 +53,10 @@ CONTRAST_PAIRS = [
 
 
 def banner_html(readouts=()):
-    """Header band; readouts is a list of (label, value) shown on the right."""
-    read = "".join(f"<div><span>{k}</span>{v}</div>" for k, v in readouts)
+    """Header band; readouts is a list of (label, value) or (label, value,
+    css class) shown on the right (class "stale" turns the value amber)."""
+    read = "".join(f'<div class="{r[2] if len(r) > 2 else ""}"><span>{r[0]}'
+                   f"</span>{r[1]}</div>" for r in readouts)
     return ('<div class="gl-banner"><div><div class="gl-title">GRIDLENS</div>'
             '<div class="gl-sub">Steady-state network study &middot; load '
             'flow &middot; N-1 security &middot; voltage stability &middot; '

@@ -2,7 +2,7 @@
 # does the detailed styling with the same palette.
 [theme]
 base = "dark"
-primaryColor = "#8A9099"
+primaryColor = "#3B82F6"
 backgroundColor = "#33363C"
 secondaryBackgroundColor = "#3B3F45"
 textColor = "#C8CCD0"

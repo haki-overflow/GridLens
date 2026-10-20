@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 import gridcore
 import figures
+import formats
 import topics
 import working as W
 from gridcore import CASES, COORDS
@@ -120,6 +121,13 @@ class TLineIn(BaseModel):
     lagging: bool = True
 
 
+class ImportIn(BaseModel):
+    filename: str = Field(..., description="decides the reader: .m (MATPOWER), "
+                          ".cdf / .txt (IEEE common format), .csv (GridLens templates)")
+    text: str
+    lines_text: Optional[str] = Field(None, description="the line CSV, for CSV imports")
+
+
 class ToPuIn(BaseModel):
     sbase: float
     ref_bus: int
@@ -198,6 +206,17 @@ def case(name: str):
     bus, lines = CASES[name]
     return {"name": name, "bus": to_json(bus), "lines": to_json(lines),
             "settings": Settings().model_dump()}
+
+
+@app.post("/api/import")
+def import_case(body: ImportIn):
+    """A case file -> a GridLens case (per unit, taps and shunts on)."""
+    c = _guard(lambda: formats.read_case(body.filename, body.text, body.lines_text), "Import")
+    settings = Settings(base=c["base"], taps=True, shunts=True).model_dump()
+    b, l, probs, notes = _guard(lambda: gridcore.prep_case(c["bus"], c["lines"], settings),
+                                "Validation")
+    return {"name": c["name"], "bus": to_json(c["bus"]), "lines": to_json(c["lines"]),
+            "settings": settings, "notes": c["notes"] + notes, "problems": probs}
 
 
 @app.post("/api/validate")

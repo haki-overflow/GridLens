@@ -141,10 +141,12 @@ def solve_loadflow(bus, lines, method="Newton-Raphson", tol=1e-8, init="flat",
     Y = build_ybus(n, lines, bus)
     V0 = bus["V"].astype(float).values.copy()
     th0 = np.zeros(n)
+    va = np.radians(pd.to_numeric(bus["Va"], errors="coerce").fillna(0).to_numpy(float)) \
+        if "Va" in bus else th0
+    th0[t == "Slack"] = va[t == "Slack"]  # the reference angle (0 unless given)
     if init == "setpoint":
         V0[V0 <= 0] = 1.0
-        if "Va" in bus:
-            th0 = np.radians(pd.to_numeric(bus["Va"], errors="coerce").fillna(0).to_numpy(float))
+        th0 = va.copy()
     else:
         V0[t == "PQ"] = 1.0  # flat start
     Psp = (bus["Pg"] - bus["Pd"]).astype(float).values

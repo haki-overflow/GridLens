@@ -21,6 +21,11 @@ def prep_case(bus_df, lines_df, cfg):
     (bus, lines, problems, notes); problems non-empty = do not solve."""
     b = bus_df.copy()
     l = lines_df.copy()
+    # an empty table (a drawing with no lines yet) has no columns at all
+    for df, cols in ((b, ("Type",)), (l, ("From", "To"))):
+        for c in cols:
+            if c not in df:
+                df[c] = pd.Series(dtype=object)
     l = l.dropna(subset=["From", "To"]).reset_index(drop=True)
     b = b.dropna(subset=["Type"]).reset_index(drop=True)
     probs, notes = [], []
@@ -107,6 +112,9 @@ def prep_case(bus_df, lines_df, cfg):
     if n > 1 and len(seen) < n:
         lost = ", ".join(str(x + 1) for x in sorted(set(range(n)) - seen))
         probs.append(f"Network is disconnected: bus 1 cannot reach buses {lost}.")
+    if not len(l):
+        probs.append("There are no lines: add at least one line between two "
+                     "buses.")
     return b, l, probs, notes
 
 

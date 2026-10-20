@@ -1,6 +1,6 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, canRedo, canUndo, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, redo, report, reset, run, setState, subscribe, undo, type State } from "./app";
+import { VIEWS, canRedo, canUndo, exportProject, newNetwork, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, redo, report, reset, run, setState, subscribe, undo, type State } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
 import { ICON, editingText, h } from "./ui";
@@ -411,7 +411,7 @@ export function mountChrome(read: HTMLElement, status: HTMLElement, outTabs: HTM
 
 // ---- start and hints ---------------------------------------------------
 
-/** First-run welcome: three ways to begin. Hidden once a case was chosen. */
+/** First-run welcome: four ways to begin. Hidden once a case was chosen. */
 export function mountStart(host: HTMLElement): void {
   const box = h("div", "start");
   const file = h("input");
@@ -428,6 +428,8 @@ export function mountStart(host: HTMLElement): void {
     return c;
   };
   const btn = (label: string, primary = false) => h("button", `btn${primary ? " primary" : ""}`, label);
+  const draw = btn("Start drawing", true);
+  draw.addEventListener("click", newNetwork);
   const wiz = btn("Open the form", true);
   const pick = btn("Choose a file");
   const skip = h("button", "linklike", "Skip: continue with the current example");
@@ -452,6 +454,7 @@ export function mountStart(host: HTMLElement): void {
     (() => {
       const row = h("div", "start-cards");
       row.append(card("Use an example", "Start from a ready-made network.", examples),
+        card("Draw a new network", "Start from one Slack bus and draw the buses, lines and loads.", draw),
         card("Enter textbook data", "Type a question's data in MVA, kV and ohms.", wiz),
         card("Open a file", "Load a saved .gridlens.json project.", pick, file));
       return row;
@@ -480,10 +483,14 @@ export function mountHint(el: HTMLElement): void {
       el.hidden = true;
       return;
     }
-    if (!s.results) {
-      [text, label, act] = ["Press Run (F5) to solve the case.", "Run", () => void run()];
+    if (!s.results && !s.case.lines.length) {
+      [text, label, act] = ["Draw the network with the tools on the diagram, or fill in the tables.",
+        "Data tables", () => navigate("case-tables")];
+    } else if (!s.results) {
+      [text, label, act] = [canUndo() ? "Press Run (F5) to solve." : "Press Run (F5) to solve the case.",
+        "Run", () => void run()];
     } else if (isStale(s)) {
-      [text, label, act] = ["The case changed. Press Run (F5) to update the results.", "Run", () => void run()];
+      [text, label, act] = ["The case changed. Press Run (F5) to solve.", "Run", () => void run()];
     } else if (NEXT[view]) {
       const [t, v] = NEXT[view]!;
       [text, label, act] = [t, `Go to ${VIEWS.find((x) => x.id === v)?.label}`, () => navigateView(v)];

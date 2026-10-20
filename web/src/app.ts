@@ -76,7 +76,7 @@ export interface ViewDef {
 }
 
 export const VIEWS: ViewDef[] = [
-  { id: "network", label: "Network", hint: "Draw and edit your grid", needsRun: false,
+  { id: "network", label: "Network", hint: "Draw it, or fill in the tables", needsRun: false,
     subs: [{ id: "diagram", label: "Diagram", doc: "canvas" },
       { id: "tables", label: "Data tables", doc: "case-tables" }] },
   { id: "solve", label: "Solve", hint: "Run the load flow", needsRun: true,

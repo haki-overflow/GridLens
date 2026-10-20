@@ -80,3 +80,14 @@ def test_problem_disconnected():
              ((L5["From"] == 2) & (L5["To"] == 5)))
     assert _probs(B5, L5[keep].reset_index(drop=True)) == [
         "Network is disconnected: bus 1 cannot reach buses 5."]
+
+
+def test_problem_no_lines_yet():
+    # a new drawing: one bus, an empty line table with no columns at all
+    bus = B5.iloc[:1].reset_index(drop=True)
+    assert _probs(bus, pd.DataFrame()) == [
+        "There are no lines: add at least one line between two buses."]
+
+
+def test_problem_no_buses():
+    assert _probs(pd.DataFrame(), L5)[0] == "There are no buses: every row needs a Type."

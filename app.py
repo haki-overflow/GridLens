@@ -14,7 +14,7 @@ import gridcore
 from gridcore import ai_report, lm_models
 import figures
 import ui
-from gridcore import CASES, COORDS
+from gridcore import CASES
 from figures import (convergence_history, fault_voltages,
                       pv_curves, voltage_profile)
 from solver import METHODS
@@ -506,12 +506,11 @@ CHART_CFG = {"scrollZoom": True, "displaylogo": False,
 def _diagram(out, key, height, tripped=None, flows=None, res=None,
              show=None, selected=None, on_select="ignore"):
     """Plotly one-line diagram of the solved case (or an outage case)."""
-    label = st.session_state.get("case_label")
     fig = figures.figure(res if res is not None else out["res"], out["l"],
                          out["vmin"], out["vmax"],
                          out["flows"] if flows is None else flows,
                          base=out["base"], bus=out["b"],
-                         coords=COORDS.get(label), show=show, tripped=tripped,
+                         show=show, tripped=tripped,
                          selected=selected, height=height)
     return st.plotly_chart(fig, key=key, theme=None, config=CHART_CFG,
                            on_select=on_select, selection_mode="points")

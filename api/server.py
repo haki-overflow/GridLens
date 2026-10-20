@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -23,7 +24,7 @@ import figures
 import formats
 import topics
 import working as W
-from gridcore import CASES, COORDS
+from gridcore import CASES
 from solver import build_ybus
 from studies import fault_analysis
 
@@ -57,8 +58,7 @@ class Case(BaseModel):
     bus: list[dict[str, Any]]
     lines: list[dict[str, Any]]
     settings: Settings = Field(default_factory=Settings)
-    name: Optional[str] = Field(None, description="Preset name; selects the "
-                                "hand-placed diagram coordinates in /api/layout.")
+    name: Optional[str] = Field(None, description="Case name (a label only).")
 
 
 class FaultIn(BaseModel):
@@ -192,6 +192,14 @@ def _loadflow(case):
     return _guard(run, "Load flow")
 
 
+def _bus_kv(b, default):
+    """Base kV per bus: the bus kV column where given (> 0), else default."""
+    if "kV" not in b:
+        return np.full(len(b), float(default))
+    kv = pd.to_numeric(b["kV"], errors="coerce").to_numpy(float)
+    return np.where(np.isfinite(kv) & (kv > 0), kv, float(default))
+
+
 # --------------------------------------------------------------- endpoints
 @app.get("/api/cases")
 def cases():
@@ -245,7 +253,7 @@ def study(case: Case):
 def layout(case: Case):
     b, l, _ = _prep(case)
     edges = [(int(f) - 1, int(t) - 1) for f, t in zip(l["From"], l["To"])]
-    g = _guard(lambda: figures.layout(len(b), edges, b, COORDS.get(case.name)),
+    g = _guard(lambda: figures.layout(len(b), edges, b),
                "Layout")
     return to_json(g)
 
@@ -263,8 +271,10 @@ def outage(k: int, case: Case):
 @app.post("/api/fault")
 def fault(body: FaultIn):
     b, l, res, *_ = _loadflow(body.case)
+    kv = _bus_kv(b, body.kv)
     tbl, Z, V0, If = _guard(lambda: fault_analysis(
-        b, l, res, body.xd, body.zf, body.case.settings.base, body.kv), "Fault analysis")
+        b, l, res, body.xd, body.zf, body.case.settings.base,
+        body.kv if np.all(kv == body.kv) else kv), "Fault analysis")
     return {"table": to_json(tbl), "Z": to_json(Z), "V0": to_json(V0),
             "If": to_json(If)}
 
@@ -276,8 +286,7 @@ def seqfault(body: SeqFaultIn):
     g0, b0 = topics.seed_tables(b, l)
     gens = frame(body.gens) if body.gens is not None else g0
     br = frame(body.branches) if body.branches is not None else b0
-    kv = np.asarray(body.kv, float) if body.kv is not None else (
-        b["kV"].astype(float).to_numpy() if "kV" in b else np.full(n, 33.0))
+    kv = np.asarray(body.kv, float) if body.kv is not None else _bus_kv(b, 33.0)
     vf = np.ones(n, complex) if body.prefault == "flat" else \
         res["V (pu)"].to_numpy() * np.exp(1j * np.radians(res["Angle (deg)"].to_numpy()))
     zf, base = complex_in(body.zf), body.case.settings.base

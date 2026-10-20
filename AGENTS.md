@@ -83,7 +83,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - Handle LM Studio errors clearly (wrong model id vs server unreachable are different errors).
 
 ## Known issues / planned fixes (do as separate changes, not mixed into refactors)
-1. Gauss-Seidel ignores `tol` in `solve_loadflow`; pass it through so the method comparison is fair.
+1. (fixed in v1.6) Gauss-Seidel now honours `tol` in `solve_loadflow`, so the method comparison is fair.
 2. (fixed in v1.3) `ai_report` now raises on HTTP errors.
 3. The Fault levels page (`studies.fault_analysis`) still uses a single base kV; the Unsymmetrical faults page (`topics.py`, sequence-fault section) uses each bus's own kV.
 4. Numerical Jacobian is slow on large cases; an analytical one exists in `working.jacobian` if the solver ever needs it.

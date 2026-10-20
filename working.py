@@ -13,7 +13,7 @@ that each trace ends on the solver's answer.
 import numpy as np
 import pandas as pd
 
-from solver import build_ybus
+from solver import branch_y, build_ybus, in_service
 
 
 def _setup(bus):
@@ -44,16 +44,23 @@ def ybus_parts(bus, lines):
     """One row per term: Element (i, j), source, value. Summing the terms
     of an element gives build_ybus exactly (taps on the From side)."""
     rows = []
-    for _, l in lines.iterrows():
+    for _, l in in_service(lines).iterrows():
         i, j = int(l["From"]) - 1, int(l["To"]) - 1
         a = l["Tap"] if "Tap" in l and l["Tap"] > 0 else 1.0
         y, b = 1 / complex(l["R"], l["X"]), 1j * l["B"] / 2
         name = f"line {i + 1}-{j + 1}"
         tap = abs(a - 1) > 1e-12
-        rows += [(i, i, f"{name}: series y" + (f"/a² (a = {a:g})" if tap else ""), y / a**2),
-                 (j, j, f"{name}: series y", y),
-                 (i, j, f"{name}: -y" + ("/a" if tap else ""), -y / a),
-                 (j, i, f"{name}: -y" + ("/a" if tap else ""), -y / a)]
+        sh = float(l["Shift"]) if "Shift" in l and l["Shift"] else 0.0
+        if sh:  # phase shifter: t = a e^{j shift}, Yft = -y/t*, Ytf = -y/t
+            _, _, yft, ytf = branch_y(l)
+            rows += [(i, i, f"{name}: series y/|t|² (a = {a:g}, shift {sh:g}°)", y / a**2),
+                     (j, j, f"{name}: series y", y),
+                     (i, j, f"{name}: -y/t*", yft), (j, i, f"{name}: -y/t", ytf)]
+        else:
+            rows += [(i, i, f"{name}: series y" + (f"/a² (a = {a:g})" if tap else ""), y / a**2),
+                     (j, j, f"{name}: series y", y),
+                     (i, j, f"{name}: -y" + ("/a" if tap else ""), -y / a),
+                     (j, i, f"{name}: -y" + ("/a" if tap else ""), -y / a)]
         if l["B"]:
             rows += [(i, i, f"{name}: charging jB/2", b),
                      (j, j, f"{name}: charging jB/2", b)]
@@ -61,6 +68,10 @@ def ybus_parts(bus, lines):
         for i, bs in enumerate(bus["Bs"].fillna(0).astype(float)):
             if bs:
                 rows.append((i, i, f"bus {i + 1}: shunt jBs", 1j * bs))
+    if "Gs" in bus:
+        for i, gs in enumerate(bus["Gs"].fillna(0).astype(float)):
+            if gs:
+                rows.append((i, i, f"bus {i + 1}: shunt Gs", complex(gs, 0)))
     df = pd.DataFrame(rows, columns=["i", "j", "Source", "Value"])
     df["Element"] = [f"Y{i + 1},{j + 1}" for i, j in zip(df["i"], df["j"])]
     return df.sort_values(["i", "j"], kind="stable").reset_index(drop=True)
@@ -160,7 +171,7 @@ def fd_matrices(bus, lines):
     Y = build_ybus(n, lines, bus)
     _, _, _, _, ang, mag = _setup(bus)
     Bp = np.zeros((n, n))
-    for _, l in lines.iterrows():
+    for _, l in in_service(lines).iterrows():
         i, j = int(l["From"]) - 1, int(l["To"]) - 1
         b = 1 / l["X"]
         Bp[i, i] += b

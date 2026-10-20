@@ -42,22 +42,37 @@ def prep_case(bus_df, lines_df, cfg):
         probs.append("Bus Type must be Slack, PV or PQ (row(s) "
                      + ", ".join(map(str, bad)) + ").")
 
-    for c in ("V", "Pg", "Qg", "Pd", "Qd", "Bs"):
+    for c in ("V", "Pg", "Qg", "Pd", "Qd", "Bs", "Gs"):
         b[c] = _num(b, c, probs, 1.0 if c == "V" else 0.0)
+    _labels(b, probs)
+    if "kV" in b:
+        kv = pd.to_numeric(b["kV"], errors="coerce")
+        bad_kv = [i + 1 for i, v in enumerate(kv) if pd.notna(v) and v <= 0]
+        if bad_kv:
+            probs.append("Base kV must be greater than 0 (bus rows "
+                         + ", ".join(map(str, bad_kv)) + ").")
+    if float(cfg.get("base", 100.0) or 0) <= 0:
+        probs.append("System base MVA must be greater than 0.")
     if cfg["qlim"]:
         b["Qmin"] = _num(b, "Qmin", probs, -9999.0)
         b["Qmax"] = _num(b, "Qmax", probs, 9999.0)
 
-    for c in ("From", "To", "R", "X", "B", "Tap"):
+    for c in ("From", "To", "R", "X", "B", "Tap", "Shift", "Rate"):
         l[c] = _num_l(l, c, probs, 1.0 if c == "Tap" else 0.0)
+    l["InService"] = [1.0 if _on(v) else 0.0 for v in l["InService"]] \
+        if "InService" in l else 1.0
+    off = int((l["InService"] == 0).sum())
+    if off:
+        notes.append(f"{off} branch(es) are out of service and carry no flow.")
 
     if not cfg["shunts"]:
-        if "Bs" in bus_df and \
-                pd.to_numeric(bus_df["Bs"],
-                              errors="coerce").fillna(0).abs().max() > 0:
+        has = [c for c in ("Bs", "Gs") if c in bus_df and pd.to_numeric(
+            bus_df[c], errors="coerce").fillna(0).abs().max() > 0]
+        if has:
             notes.append("Bus shunts exist in the data but 'Shunt elements' "
-                         "is off; Bs = 0 was used. Turn it on to include them.")
+                         f"is off; {' = '.join(has)} = 0 was used. Turn it on to include them.")
         b["Bs"] = 0.0
+        b["Gs"] = 0.0
     if "Tap" in l and not cfg["taps"]:
         if "Tap" in lines_df and \
                 pd.to_numeric(lines_df["Tap"],
@@ -67,6 +82,12 @@ def prep_case(bus_df, lines_df, cfg):
                          "'Transformer taps' is off; Tap = 1 was used. Turn "
                          "it on to include them.")
         l["Tap"] = 1.0
+    if not cfg["taps"]:
+        if "Shift" in lines_df and pd.to_numeric(lines_df["Shift"], errors="coerce") \
+                .fillna(0).abs().max() > 1e-9:
+            notes.append("Phase shifts exist in the data but 'Transformer taps' "
+                         "is off; shift = 0 was used. Turn it on to include them.")
+        l["Shift"] = 0.0
 
     n = len(b)
     for c in ("From", "To"):
@@ -116,6 +137,29 @@ def prep_case(bus_df, lines_df, cfg):
         probs.append("There are no lines: add at least one line between two "
                      "buses.")
     return b, l, probs, notes
+
+
+def _on(v):
+    """In-service flag: blank, 1, true, yes, on = in service."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return True
+    if isinstance(v, str):
+        return v.strip().lower() not in ("0", "false", "no", "off", "out")
+    return bool(v)
+
+
+def _labels(b, probs):
+    """Optional bus Num (the user's bus number, a label; lines refer to rows)
+    and Name. Numbers must be whole and unique."""
+    if "Num" not in b:
+        return
+    num = pd.to_numeric(b["Num"], errors="coerce")
+    if num.isna().any() or (num % 1 != 0).any():
+        probs.append("Bus numbers must be whole numbers.")
+        return
+    dup = sorted({int(v) for v in num[num.duplicated()]})
+    if dup:
+        probs.append("Duplicate bus numbers: " + ", ".join(map(str, dup)) + ".")
 
 
 def _num(df, col, probs, fill):

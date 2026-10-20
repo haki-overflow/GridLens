@@ -45,6 +45,9 @@ class Settings(BaseModel):
     qlim: bool = False
     taps: bool = False
     shunts: bool = False
+    freq: float = 50.0
+    units: str = Field("pu", description='"pu" (per unit on base MVA) or "actual" '
+                       "(MW, MVAr, kV, ohm, uS), converted per bus base kV")
 
 
 class Case(BaseModel):

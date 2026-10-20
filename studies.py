@@ -5,26 +5,56 @@ from solver import build_ybus, solve_loadflow
 
 
 # ------------------------------------------------------ study extras
-def contingency(bus, lines, vmin, vmax):
-    """N-1: remove each line, re-solve (Newton-Raphson), rank by severity."""
+def branch_names(lines):
+    """"From-To" per branch; parallel branches get " (2)", " (3)"..."""
+    seen, out = {}, []
+    for f, t in zip(lines["From"], lines["To"]):
+        key = f"{int(f)}-{int(t)}"
+        seen[key] = seen.get(key, 0) + 1
+        out.append(key if seen[key] == 1 else f"{key} ({seen[key]})")
+    return out
+
+
+def overloads(flows, lines, base):
+    """Branches loaded above their Rate (MVA; 0 or missing = no rating)."""
+    if "Rate" not in lines:
+        return []
+    rate = pd.to_numeric(lines["Rate"], errors="coerce").fillna(0).to_numpy(float)
+    s = np.maximum(np.hypot(flows["P_ij"], flows["Q_ij"]),
+                   np.hypot(flows["P_ji"], flows["Q_ji"])).to_numpy(float) * base
+    names = branch_names(lines)
+    return [names[k] for k in range(len(rate)) if rate[k] > 0 and s[k] > rate[k] + 1e-9]
+
+
+def contingency(bus, lines, vmin, vmax, base=100.0):
+    """N-1: remove each in-service line, re-solve (Newton-Raphson), rank by
+    severity (voltage violations, then overloads, then lowest voltage)."""
     rows = []
+    names = branch_names(lines)
+    on = lines["InService"].fillna(1).astype(float).to_numpy() != 0 \
+        if "InService" in lines else np.ones(len(lines), bool)
     for k in range(len(lines)):
-        name = f"{int(lines.iloc[k]['From'])}-{int(lines.iloc[k]['To'])}"
+        if not on[k]:
+            continue
+        name = names[k]
         try:
-            r, fl, ok, _ = solve_loadflow(bus, lines.drop(lines.index[k]).reset_index(drop=True))
+            rest = lines.drop(lines.index[k]).reset_index(drop=True)
+            r, fl, ok, _ = solve_loadflow(bus, rest)
             if not ok or not np.isfinite(r["V (pu)"]).all():
                 raise ValueError("no convergence")
             v = r["V (pu)"]
             bad = r[(v < vmin) | (v > vmax)]["Bus"].tolist()
+            over = overloads(fl, rest, base)
             rows.append([name, "OK", len(bad), round(v.min(), 4),
                          int(r.loc[v.idxmin(), "Bus"]), round(fl["Loss_P"].sum(), 4),
-                         ", ".join(map(str, bad)) or "-"])
+                         ", ".join(map(str, bad)) or "-", len(over), ", ".join(over) or "-"])
         except Exception:
-            rows.append([name, "FAILED", None, None, None, None, "islanded/diverged"])
+            rows.append([name, "FAILED", None, None, None, None, "islanded/diverged", None, "-"])
     df = pd.DataFrame(rows, columns=["Outage", "Status", "Violations", "Min V (pu)",
-                                     "At bus", "Loss (pu)", "Buses violating"])
-    return df.sort_values(["Status", "Violations", "Min V (pu)"],
-                          ascending=[True, False, True]).reset_index(drop=True)
+                                     "At bus", "Loss (pu)", "Buses violating",
+                                     "Overloads", "Lines overloaded"])
+    return df.sort_values(["Status", "Violations", "Overloads", "Min V (pu)"],
+                          ascending=[True, False, False, True]).reset_index(drop=True)
 
 
 def fault_analysis(bus, lines, res, xd, zf, base, kv):

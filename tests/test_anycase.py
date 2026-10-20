@@ -167,3 +167,57 @@ def test_out_of_service_line_can_split_the_network():
     lines = L5.assign(InService=[1, 1, 1, 1, 0, 1, 0])   # 2-5 and 4-5 out: bus 5 alone
     probs = _prep(B5, lines)[2]
     assert probs and probs[0].startswith("Network is disconnected: buses 5 ")
+
+
+# ------------------------------------------------- step 4: fallback, hints, ratings
+def test_fallback_solves_when_the_chosen_method_gives_up(monkeypatch):
+    real = gridcore.solve_loadflow
+
+    def gs_never_converges(bus, lines, method="Newton-Raphson", *a, **kw):
+        res, flows, ok, hist = real(bus, lines, method, *a, **kw)
+        return res, flows, ok and method != "Gauss-Seidel", hist
+    monkeypatch.setattr(gridcore, "solve_loadflow", gs_never_converges)
+    b, l, *_ = _prep(*CASES["IEEE 14-bus"])
+    res, flows, ok, hist, b_lf, qlog, attempts, hint = gridcore.loadflow(b, l, "Gauss-Seidel", 1e-8)
+    assert ok and hint == ""
+    assert [a["Converged"] for a in attempts] == [False, True]
+    assert attempts[1]["Method"] == "Newton-Raphson"
+    nr, *_ = real(b, l)
+    assert np.allclose(res["V (pu)"], nr["V (pu)"], atol=1e-12)
+    *_, attempts, hint = gridcore.loadflow(b, l, "Gauss-Seidel", 1e-8, fallback=False)
+    assert len(attempts) == 1 and hint.startswith("Worst mismatch at bus")
+
+
+def test_hint_says_load_too_high():
+    bus = B5.assign(Pd=B5["Pd"] * 8, Qd=B5["Qd"] * 8, Pg=B5["Pg"] * 8)
+    b, l, *_ = _prep(bus, L5)
+    *_, ok, hist, b_lf, qlog, attempts, hint = gridcore.loadflow(b, l, "Newton-Raphson", 1e-8)[:8]
+    assert not ok and len(attempts) == 5
+    assert "solves at half load" in hint
+
+
+def test_hint_spots_megawatts_typed_as_per_unit():
+    bus = B5.assign(Pd=B5["Pd"] * 100, Qd=B5["Qd"] * 100, Pg=B5["Pg"] * 100)
+    b, l, *_ = _prep(bus, L5)
+    hint = gridcore.loadflow(b, l, "Newton-Raphson", 1e-8)[-1]
+    assert "look like MW" in hint
+
+
+def test_line_loading_and_n1_overloads_from_ratings():
+    lines = L5.assign(Rate=[120, 0, 40, 40, 60, 40, 30])
+    b, l, *_ = _prep(B5, lines)
+    out = gridcore.run_study(b, l, "Newton-Raphson", 1e-8, 100.0, 0.95, 1.1)
+    ld = out["loading"]
+    s12 = np.hypot(out["flows"]["P_ij"][0], out["flows"]["Q_ij"][0]) * 100
+    assert ld["S (MVA)"][0] >= s12 - 1e-9 and np.isnan(ld["Loading (%)"][1])
+    assert ld["Loading (%)"][0] == pytest.approx(ld["S (MVA)"][0] / 120 * 100)
+    assert (out["n1"]["Overloads"].fillna(0) > 0).any()
+    assert "Overloads" in out["summary"]
+
+
+def test_parallel_branches_get_unique_names():
+    from studies import branch_names
+    lines = pd.concat([L5, L5.iloc[[0]]], ignore_index=True)
+    assert branch_names(lines)[-1] == "1-2 (2)"
+    res, *_ = solve_loadflow(B5, lines)   # parallel lines simply add in Ybus
+    assert res["V (pu)"].notna().all()

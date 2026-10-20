@@ -23,8 +23,7 @@ import figures
 import topics
 import working as W
 from gridcore import CASES, COORDS
-from solver import solve_with_qlimits
-from solver import build_ybus, solve_loadflow
+from solver import build_ybus
 from studies import fault_analysis
 
 from .schema import complex_in, frame, to_json
@@ -45,6 +44,9 @@ class Settings(BaseModel):
     qlim: bool = False
     taps: bool = False
     shunts: bool = False
+    init: str = Field("flat", description='"flat" (1∠0° start) or "setpoint" (V and Va columns)')
+    fallback: bool = Field(True, description="try other methods/starts when the load flow "
+                           "does not converge")
     freq: float = 50.0
     units: str = Field("pu", description='"pu" (per unit on base MVA) or "actual" '
                        "(MW, MVAr, kV, ohm, uS), converted per bus base kV")
@@ -176,10 +178,8 @@ def _loadflow(case):
     s = case.settings
 
     def run():
-        if s.qlim:
-            res, flows, ok, hist, b_lf, qlog = solve_with_qlimits(b, l, s.method, s.tol)
-        else:
-            (res, flows, ok, hist), b_lf, qlog = solve_loadflow(b, l, s.method, s.tol), b, []
+        res, flows, ok, hist, b_lf, qlog, *_ = gridcore.loadflow(
+            b, l, s.method, s.tol, s.qlim, s.init, s.fallback)
         return b, l, res, flows, ok, hist, b_lf, qlog
     return _guard(run, "Load flow")
 
@@ -212,8 +212,12 @@ def study(case: Case):
     b, l, notes = _prep(case)
     s = case.settings
     out = _guard(lambda: gridcore.run_study(b, l, s.method, s.tol, s.base,
-                                            s.vmin, s.vmax, s.qlim), "Study")
+                                            s.vmin, s.vmax, s.qlim, s.init,
+                                            s.fallback), "Study")
     pv, lam = out.pop("pv")
+    if out["ok"] and len(out["attempts"]) > 1:
+        notes = notes + [f"{s.method} ({s.init} start) did not converge; solved with "
+                         f"{out['solved_with']}. See Solve > Do the 3 methods agree?"]
     return {**to_json(out), "pv": {"curve": to_json(pv), "lambda_max": lam},
             "notes": notes}
 

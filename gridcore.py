@@ -12,7 +12,7 @@ import pandas as pd
 
 from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
-from studies import contingency, pv_curve
+from studies import branch_names, contingency, pv_curve
 from studies import outage as _outage
 
 
@@ -210,14 +210,108 @@ def _num_l(df, col, probs, fill):
     return v.fillna(fill)
 
 
-def run_study(b, l, method, tol, base, vmin, vmax, qlim=False):
+# ------------------------------------------------- robust main load flow
+ATTEMPTS = [  # tried in order after the chosen method fails (fallback on)
+    ("Newton-Raphson", "flat", 1.0), ("Newton-Raphson", "setpoint", 1.0),
+    ("Newton-Raphson", "flat", 0.5), ("Fast Decoupled", "flat", 1.0),
+    ("Gauss-Seidel", "flat", 1.0)]
+
+
+def _try(b, l, method, tol, qlim, init, damp):
+    kw = {} if (init, damp) == ("flat", 1.0) else dict(
+        init=init, damp=damp, max_iter=100 if damp < 1 else None)
+    try:
+        if qlim:
+            res, flows, ok, hist, b_lf, qlog = solve_with_qlimits(b, l, method, tol, **kw)
+        else:
+            (res, flows, ok, hist), b_lf, qlog = solve_loadflow(b, l, method, tol, **kw), b, []
+        ok = bool(ok) and np.isfinite(res["V (pu)"]).all()
+    except np.linalg.LinAlgError:
+        return None
+    return res, flows, ok, hist, b_lf, qlog
+
+
+def loadflow(b, l, method, tol, qlim=False, init="flat", fallback=True):
+    """The main load flow. The chosen method and start are tried first (so a
+    case that converges gives exactly what solve_loadflow gives); if it does
+    not converge and fallback is on, ATTEMPTS are tried in turn. Returns
+    (res, flows, ok, hist, b_lf, qlog, attempts, hint); attempts lists every
+    try, hint explains a failure in plain words."""
+    plan = [(method, init, 1.0)] + ([a for a in ATTEMPTS if a != (method, init, 1.0)]
+                                    if fallback else [])
+    attempts, first = [], None
+    for m, start, damp in plan:
+        out = _try(b, l, m, tol, qlim, start, damp)
+        attempts.append(dict(Method=m, Start=start + (", damped" if damp < 1 else ""),
+                             Converged=bool(out and out[2]),
+                             Iterations=len(out[3]) - 1 if out else None))
+        first = first or out
+        if out and out[2]:
+            return (*out, attempts, "")
+    if first is None:
+        raise ValueError("the network equations are singular: " + _singular_hint(b, l))
+    return (*first, attempts, failure_hint(b, l, first[0], first[4]))
+
+
+def _singular_hint(b, l):
+    return ("check for lines with zero or tiny impedance, buses with no "
+            "connection and the Slack bus")
+
+
+def failure_hint(b, l, res, b_lf):
+    """Plain-language reason for a load flow that did not converge, from the
+    bus with the largest power mismatch in the last iterate."""
+    p = (b_lf["Pg"] - b_lf["Pd"]).astype(float).to_numpy()
+    q = (b_lf["Qg"] - b_lf["Qd"]).astype(float).to_numpy()
+    t = b_lf["Type"].to_numpy()
+    dp = np.where(t != "Slack", np.abs(res["P_inj"].to_numpy(float) - p), 0)
+    dq = np.where(t == "PQ", np.abs(res["Q_inj"].to_numpy(float) - q), 0)
+    mis = np.nan_to_num(np.maximum(dp, dq), nan=np.inf)
+    k = int(np.argmax(mis))
+    v = res["V (pu)"].to_numpy(float)
+    blew = not np.isfinite(mis[k]) or mis[k] > 1e3 or not np.isfinite(v).all()
+    where = (f"The iterations blew up, worst near bus {k + 1}." if blew
+             else f"Worst mismatch at bus {k + 1} ({mis[k]:.3g} pu).")
+    big = np.abs(np.r_[p, q]).max(initial=0)
+    if big > 20:
+        return (f"{where} Some powers are above 20 pu: they look like MW / MVAr, not per "
+                "unit. Divide by the base MVA, or set the case units to actual values.")
+    half = b.copy()
+    half[["Pg", "Qg", "Pd", "Qd"]] = half[["Pg", "Qg", "Pd", "Qd"]] * 0.5
+    try:
+        ok_half = solve_loadflow(half, l)[2]
+    except Exception:
+        ok_half = False
+    if ok_half:
+        return (f"{where} The case solves at half load, so the load is probably too "
+                "high for this network (past the nose of the PV curve). Reduce the load, "
+                "add generation or reactive support near that bus, or strengthen the lines.")
+    if not blew and v[k] < 0.7:
+        return (f"{where} The voltage there collapses ({v[k]:.2f} pu): check the line data "
+                "to that bus (R and X in per unit) and the load at it.")
+    return (f"{where} Check the data at that bus and its lines (signs of P and Q, per "
+            "unit values), and that the Slack bus is a strong source.")
+
+
+def line_loading(flows, l, base):
+    """MVA through each branch (larger end) and % of its Rate (MVA, 0 = none)."""
+    s = np.maximum(np.hypot(flows["P_ij"], flows["Q_ij"]),
+                   np.hypot(flows["P_ji"], flows["Q_ji"])).to_numpy(float) * base
+    rate = pd.to_numeric(l["Rate"], errors="coerce").fillna(0).to_numpy(float) \
+        if "Rate" in l else np.zeros(len(l))
+    pct = np.where(rate > 0, s / np.where(rate > 0, rate, 1) * 100, np.nan)
+    return pd.DataFrame({"Branch": branch_names(l), "S (MVA)": s, "Rate (MVA)": rate,
+                         "Loading (%)": pct})
+
+
+def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
+              fallback=True):
     """Load flow plus every study (method comparison, N-1, P-V). With qlim
-    the main load flow enforces generator Q limits (PV -> PQ)."""
-    qlog, b_lf = [], b
-    if qlim:
-        res, flows, ok, hist, b_lf, qlog = solve_with_qlimits(b, l, method, tol)
-    else:
-        res, flows, ok, hist = solve_loadflow(b, l, method, tol)
+    the main load flow enforces generator Q limits (PV -> PQ). The main load
+    flow falls back to other methods/starts when it does not converge."""
+    res, flows, ok, hist, b_lf, qlog, attempts, hint = loadflow(
+        b, l, method, tol, qlim, init, fallback)
+    used = next((a for a in attempts if a["Converged"]), attempts[0])
     rows = []
     for m in METHODS:
         r2, f2, ok2, h2 = solve_loadflow(b, l, m)
@@ -226,7 +320,10 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False):
                      round(r2["V (pu)"].min(), 4)])
     cmp_df = pd.DataFrame(rows, columns=["Method", "Converged", "Iterations",
                                          "Loss (MW)", "Min V (pu)"])
-    n1 = contingency(b, l, vmin, vmax)
+    n1 = contingency(b, l, vmin, vmax, base)
+    loading = line_loading(flows, l, base)
+    n1_text = n1 if (n1["Overloads"].fillna(0) > 0).any() else \
+        n1.drop(columns=["Overloads", "Lines overloaded"])
     pv = pv_curve(b, l)
     loss = flows["Loss_P"].sum() * base
     load = b["Pd"].sum() * base
@@ -234,9 +331,14 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False):
     return dict(res=res, flows=flows, ok=ok, its=len(hist) - 1, hist=hist,
                 method=method, tol=tol, b=b, l=l, cmp=cmp_df,
                 n1=n1, pv=pv, loss=loss, load=load, vmin=vmin, vmax=vmax, base=base,
-                qlog=qlog, b_lf=b_lf,
+                qlog=qlog, b_lf=b_lf, attempts=attempts, hint=hint,
+                solved_with=f"{used['Method']} ({used['Start']} start)",
+                loading=loading,
                 slack_k=k + 1, slack_p=res["P_inj"].iloc[k] * base,
                 summary=(f"Method: {method}, base {base} MVA\n"
+                         + (f"({method} did not converge; solved with "
+                            f"{used['Method']}, {used['Start']} start.)\n"
+                            if len(attempts) > 1 and ok else "")
                          + res.round(4).to_string(index=False)
                          + f"\nTotal load: {load:.2f} MW. "
                          + f"Total real loss: {loss:.2f} MW"
@@ -247,7 +349,7 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False):
                             f"{pv[1]:.2f}x the base case before the load flow "
                             f"stops solving.")
                          + "\nWorst N-1 line outages (worst first):\n"
-                         + n1.head(3).to_string(index=False)))
+                         + n1_text.head(3).to_string(index=False)))
 
 
 def outage(b, l, k):

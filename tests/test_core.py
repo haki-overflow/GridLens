@@ -29,8 +29,8 @@ def _run(name, qlim):
 @pytest.mark.parametrize("name", list(CASES))
 def test_run_study_matches_previous_app(name, qlim):
     out, ref = _run(name, qlim), GOLDEN[(name, qlim)]
-    for k in ("res", "flows", "cmp", "n1"):
-        assert_frame_equal(out[k], ref[k], check_exact=True)
+    for k in ("res", "flows", "cmp", "n1"):   # v1.6 may add columns, never change old ones
+        assert_frame_equal(out[k][list(ref[k].columns)], ref[k], check_exact=True)
     assert_frame_equal(out["pv"][0], ref["pv"][0], check_exact=True)
     assert out["pv"][1] == ref["pv"][1]
     assert out["ok"] == ref["ok"]

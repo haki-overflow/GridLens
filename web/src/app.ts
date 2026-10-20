@@ -160,6 +160,7 @@ export function navigateView(viewId: string): void {
 export interface Settings {
   method: string; tol: number; base: number; vmin: number; vmax: number;
   qlim: boolean; taps: boolean; shunts: boolean;
+  init: string; fallback: boolean; freq: number; units: "pu" | "actual";
 }
 export interface CaseData { name: string; bus: Rec[]; lines: Rec[]; settings: Settings }
 export interface Study extends Rec {
@@ -167,6 +168,7 @@ export interface Study extends Rec {
   hist: number[]; method: string; tol: number; base: number; vmin: number; vmax: number;
   loss: number; load: number; slack_k: number; slack_p: number; summary: string;
   pv: { curve: Rec[]; lambda_max: number }; notes: string[]; qlog: Rec[];
+  hint: string; solved_with: string; attempts: Rec[]; loading: Rec[];
 }
 export interface Selection { kind: "bus" | "branch"; index: number }
 export interface Msg { t: string; level: "info" | "ok" | "warn" | "error"; text: string }
@@ -190,7 +192,8 @@ export interface State {
 
 export const DEFAULT_SETTINGS: Settings = {
   method: "Newton-Raphson", tol: 1e-8, base: 100, vmin: 0.95, vmax: 1.1,
-  qlim: false, taps: false, shunts: false,
+  qlim: false, taps: true, shunts: true,
+  init: "flat", fallback: true, freq: 50, units: "pu",
 };
 
 const KEY = "gridlens.project";
@@ -204,7 +207,12 @@ const fresh = (): State => ({
 function restore(): State {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...fresh(), ...(JSON.parse(raw) as Partial<State>) };
+    if (raw) {
+      const saved = JSON.parse(raw) as Partial<State>;
+      const st = { ...fresh(), ...saved, messages: [] };   // messages belong to one session
+      if (st.case) st.case = { ...st.case, settings: { ...DEFAULT_SETTINGS, ...st.case.settings } };
+      return st;
+    }
   } catch {
     /* corrupt or blocked storage: start fresh */
   }
@@ -238,7 +246,7 @@ export function setState(patch: Partial<State>, history = true): void {
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
     try {
-      localStorage.setItem(KEY, JSON.stringify({ ...state, messages: state.messages.slice(-200) }));
+      localStorage.setItem(KEY, JSON.stringify({ ...state, messages: [] }));
     } catch {
       /* quota / blocked: the project just isn't remembered */
     }
@@ -287,6 +295,11 @@ export function log(level: Msg["level"], text: string): void {
   setState({ messages: [...state.messages, { t, level, text }].slice(-200) });
 }
 
+/** Empty the message log (a new case, a new run, or the Clear button). */
+export function clearMessages(): void {
+  setState({ messages: [] });
+}
+
 // ---- file export / import ---------------------------------------------------
 interface ProjectFile { gridlens: 1; case: CaseData; view: View }
 
@@ -314,6 +327,7 @@ export async function importProject(file: File): Promise<void> {
     case: { name: c.name ?? file.name, bus: c.bus, lines: c.lines,
             settings: { ...DEFAULT_SETTINGS, ...(c.settings ?? {}) } },
     view: { ...state.view, ...(data.view ?? {}) }, selection: null, fileName: file.name, started: true,
+    results: null, solvedCase: null, solvedSig: null, outage: null, conversion: null, messages: [],
   });
   log("info", `Imported ${file.name}: ${c.bus.length} buses, ${c.lines.length} branches. Press Run.`);
 }
@@ -323,6 +337,36 @@ export async function importProject(file: File): Promise<void> {
 // What the toolbar does: load presets, run the study, reset.
 
 interface CaseOut { name: string; bus: Rec[]; lines: Rec[]; settings: typeof DEFAULT_SETTINGS }
+
+interface Imported { name: string; bus: Rec[]; lines: Rec[]; settings: Partial<Settings>;
+  notes: string[]; problems: string[] }
+
+/** Open any case file: a .gridlens.json project, a MATPOWER .m file, an IEEE
+ *  common data format file, or the CSV templates (bus and line CSV together). */
+export async function importCaseFiles(files: File[]): Promise<void> {
+  const json = files.find((f) => /\.json$/i.test(f.name));
+  if (json) return importProject(json);
+  const first = files[0];
+  if (!first) return;
+  const texts = await Promise.all(files.map((f) => f.text()));
+  let body: Rec = { filename: first.name, text: texts[0] };
+  if (/\.csv$/i.test(first.name)) {
+    const isLines = (t: string) => /(^|,)\s*From\s*,/i.test(t.split(/\r?\n/)[0] ?? "");
+    const lines = texts.find(isLines), bus = texts.find((t) => !isLines(t));
+    if (!bus) throw new Error("choose the bus CSV too (Type, V, Pg, ...), with the line CSV.");
+    body = { filename: first.name, text: bus, lines_text: lines ?? null };
+  }
+  const d = await post<Imported>("/api/import", body);
+  setState({
+    case: { name: d.name, bus: d.bus, lines: d.lines, settings: { ...DEFAULT_SETTINGS, ...d.settings } },
+    selection: null, started: true, results: null, solvedCase: null, solvedSig: null, outage: null,
+    conversion: null, messages: [], fileName: `${d.name.replace(/[^\w-]+/g, "_")}.gridlens.json`,
+  });
+  log("info", `Imported ${first.name}: ${d.bus.length} buses, ${d.lines.length} branches.`);
+  for (const n of d.notes) log("warn", n);
+  for (const p of d.problems) log("error", p);
+  navigate("canvas");   // the diagram fits itself once the layout of a new case arrives
+}
 
 export async function presets(): Promise<string[]> {
   return (await get<{ cases: string[] }>("/api/cases")).cases;
@@ -336,6 +380,7 @@ export async function loadPreset(name: string, chosen = true): Promise<void> {
       case: { name: c.name, bus: c.bus, lines: c.lines,
               settings: prev?.settings ?? { ...DEFAULT_SETTINGS } },
       selection: null, fileName: `${c.name.replace(/[^\w-]+/g, "_")}.gridlens.json`,
+      results: null, solvedCase: null, solvedSig: null, outage: null, conversion: null, messages: [],
       ...(chosen ? { started: true } : {}),
     });
     log("info", `Loaded preset ${c.name}: ${c.bus.length} buses, ${c.lines.length} branches.`);
@@ -351,6 +396,7 @@ export async function run(): Promise<void> {
   if (!c || running) return;
   running = true;
   const sig = caseSig(c);
+  clearMessages();   // the log shows the current run only
   log("info", `Running study (${c.settings.method}) on ${c.name}...`);
   try {
     const out = await post<Study>("/api/study", c);
@@ -358,8 +404,10 @@ export async function run(): Promise<void> {
     for (const n of out.notes ?? []) log("warn", n);
     const loss = out.loss.toFixed(3);
     log(out.ok ? "ok" : "error", out.ok
-      ? `Solved in ${out.its} iterations. Losses ${loss} MW, slack P ${out.slack_p.toFixed(3)} MW.`
-      : `Load flow did not converge after ${out.its} iterations. Check the loads and line data, try Newton-Raphson, or open the PV curve to see how close the case is to its limit.`);
+      ? `Solved in ${out.its} iterations (${out.solved_with}). Losses ${loss} MW, slack P ${out.slack_p.toFixed(3)} MW.`
+      : `Load flow did not converge (${(out.attempts ?? []).length} attempts: ` +
+        `${(out.attempts ?? []).map((a) => `${a.Method}, ${a.Start} start`).join("; ")}).`);
+    if (!out.ok && out.hint) log("error", out.hint);
   } catch (e) {
     report(e, "The study");
   } finally {
@@ -446,17 +494,34 @@ export function editLine(c: CaseData, i: number, patch: Rec, extra: Extra = {}):
   setState({ case: { ...c, lines: c.lines.map((l, k) => (k === i ? { ...l, ...patch } : l)) }, ...extra });
 }
 
-/** Start an empty drawing: one Slack bus (V = 1.0); the canvas opens with the
- *  Bus tool active. */
-export function newNetwork(): void {
+export interface NewCase { name: string; base: number; freq: number; units: "pu" | "actual";
+  start: "draw" | "tables" }
+
+/** A blank case: one Slack bus (V = 1.0, 0 deg). "draw" opens the diagram with
+ *  the Bus tool, "tables" opens Network > Data tables. */
+export function newCase(o: NewCase = { name: "New network", base: 100, freq: 50, units: "pu", start: "draw" }): void {
+  const slack: Rec = { ...NEW_BUS, Type: "Slack", x: 0.001, y: 0.001,
+                       ...(o.units === "actual" ? { kV: 132 } : {}) };
   setState({
-    case: { name: "New network", bus: [{ ...NEW_BUS, Type: "Slack", x: 0.001, y: 0.001 }], lines: [],
-            settings: { ...(state.case?.settings ?? DEFAULT_SETTINGS) } },
+    case: { name: o.name || "New network", bus: [slack], lines: [],
+            settings: { ...DEFAULT_SETTINGS, base: o.base, freq: o.freq, units: o.units } },
     results: null, solvedCase: null, solvedSig: null, selection: null, outage: null, conversion: null,
-    started: true, fileName: "New_network.gridlens.json",
+    started: true, messages: [], fileName: `${(o.name || "New_network").replace(/[^\w-]+/g, "_")}.gridlens.json`,
   });
+  const u = o.units === "actual" ? "MW, MVAr, kV, ohm and uS (each bus needs its base kV)"
+    : `per unit on ${o.base} MVA`;
+  log("info", `New case "${o.name}": data in ${u}.`);
+  if (o.start === "tables") {
+    navigate("case-tables");
+    return;
+  }
   navigate("canvas");
   window.dispatchEvent(new CustomEvent("gl:tool", { detail: "bus" }));
   window.dispatchEvent(new CustomEvent("gl:fit"));
-  log("info", "New network: add buses with the Bus tool (B), then lines (L), generators (G) and loads (D).");
+  log("info", "Add buses with the Bus tool (B), then lines (L), generators (G) and loads (D).");
+}
+
+/** The quick blank drawing (same as New case with the defaults). */
+export function newNetwork(): void {
+  newCase();
 }

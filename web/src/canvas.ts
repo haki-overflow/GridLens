@@ -229,13 +229,18 @@ registerDoc("canvas", (el) => {
     const xs = g.cx.flatMap((x, i) => [x - g.w[i]! / 2, x + g.w[i]! / 2]);
     const x0 = Math.min(...xs) - 1.5, x1 = Math.max(...xs) + 1.5;
     const y0 = Math.min(...g.cy) - 2.4, y1 = Math.max(...g.cy) + 2;
-    const k = Math.min(box.width / (x1 - x0), box.height / (y1 - y0), 40);
-    const z = d3.zoomIdentity.translate(box.width / 2, box.height / 2).scale(k)
+    const top = 44, bottom = 34;   // the tool bar and the hint line sit over the diagram
+    const hgt = Math.max(box.height - top - bottom, 40);
+    const k = Math.min(box.width / (x1 - x0), hgt / (y1 - y0), 40);
+    const z = d3.zoomIdentity.translate(box.width / 2, top + hgt / 2).scale(k)
       .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
     (animate ? svg.transition().duration(120) : svg).call(zoom.transform as never, z);
     return true;
   };
   const fitIfNeeded = () => {
+    // only once real positions exist (the server layout, or x, y on every bus)
+    const c = getState().case;
+    if (!c || (!matched(c) && !ownXY(c))) return;
     if (needFit && fit(false)) needFit = false;
   };
   window.addEventListener("gl:fit", () => fit());

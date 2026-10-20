@@ -1,7 +1,7 @@
 """Walk the workspace like a first-time user.
 
 1. Tour: example -> Run -> every view and sub-tab.
-2. Draw: "Draw a new network" -> add 2 buses with the Bus tool -> draw a line
+2. Draw: "New case" (draw on the diagram) -> add 2 buses with the Bus tool -> draw a line
    between them (the warning chip says the network is disconnected) -> a line
    from the Slack bus -> a load -> Run (F5) -> SOLVED. Then Network > Data
    tables: change Pd, Run again and check the result changed. Zoom the
@@ -38,7 +38,7 @@ def tour(b, bad):
     watch(pg, bad)
     pg.goto(URL)
     pg.wait_for_selector(".start-card")
-    pg.locator(".start-card").first.click()
+    pg.get_by_role("button", name="5-bus (demo)").click()
     pg.get_by_text("Run", exact=True).first.click()
     pg.wait_for_selector(SOLVED)
     for v in VIEWS:
@@ -76,13 +76,18 @@ def draw(b, bad):
     pg = ctx.new_page()
     watch(pg, bad)
     pg.goto(URL)
-    pg.get_by_role("button", name="Start drawing").click()
+    pg.get_by_role("button", name="New case").first.click()
+    pg.get_by_role("button", name="Create").click()
     pg.wait_for_selector(".bar-line", state="attached")
     need(pg.locator("[role=toolbar] .ctool.on").inner_text().startswith("Bus"), "Draw a new network: Bus tool active", bad)
     box = pg.locator(".canvas-wrap").bounding_box()
     cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
     pg.mouse.click(cx - 220, cy + 180)  # bus 2
     pg.mouse.click(cx + 220, cy + 180)  # bus 3
+    try:  # the canvas redraws on the next animation frame
+        pg.wait_for_function("document.querySelectorAll('.bar-line').length === 3", timeout=3000)
+    except Exception:
+        pass
     need(pg.locator(".bar-line").count() == 3, "Bus tool: 2 buses added", bad)
 
     def line(a, z):

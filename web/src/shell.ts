@@ -1,6 +1,6 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, canRedo, canUndo, exportProject, newNetwork, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, redo, report, reset, run, setState, subscribe, undo, type State } from "./app";
+import { VIEWS, canRedo, canUndo, exportProject, importCaseFiles, newCase, navigateView, viewOf, getState, isStale, loadPreset, navigate, presets, redo, report, reset, run, subscribe, undo, type NewCase, type State } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
 import { ICON, editingText, h } from "./ui";
@@ -248,9 +248,11 @@ export function fitCanvas(): void {
   window.dispatchEvent(new CustomEvent("gl:fit"));
 }
 
-/** A small dropdown menu button: items = [label, action, disabled?]. Closes
- *  on outside click, Escape or after choosing. */
-function menu(label: string, title: string, items: () => [string, () => void, boolean?][]): HTMLElement {
+/** A small dropdown menu button: items = [label, action, disabled?]; an item
+ *  with no action is a section heading. Closes on outside click, Escape or
+ *  after choosing. */
+type MenuItem = [string, (() => void) | null, boolean?];
+function menu(label: string, title: string, items: () => MenuItem[]): HTMLElement {
   const wrap = h("div", "tb-menu");
   const b = btn(ICON.open, label, title);
   b.append(h("span", "caret", "▾"));
@@ -263,6 +265,7 @@ function menu(label: string, title: string, items: () => [string, () => void, bo
     e.stopPropagation();
     if (!pop.hidden) { close(); return; }
     pop.replaceChildren(...items().map(([text, act, off]) => {
+      if (!act) return h("div", "tb-sec", text);
       const it = h("button", "tb-item", text);
       it.type = "button";
       it.disabled = !!off;
@@ -279,42 +282,51 @@ function menu(label: string, title: string, items: () => [string, () => void, bo
   return wrap;
 }
 
+/** Hidden file picker for every case format; opens importCaseFiles. */
+export function casePicker(): HTMLInputElement {
+  const file = h("input");
+  file.type = "file";
+  file.multiple = true;
+  file.accept = ".json,.m,.cdf,.txt,.csv";
+  file.hidden = true;
+  file.addEventListener("change", async () => {
+    const files = [...(file.files ?? [])];
+    file.value = "";
+    if (files.length) await importCaseFiles(files).catch((e) => report(e, `Opening ${files[0]!.name}`));
+  });
+  return file;
+}
+
 export function mountToolbar(bar: HTMLElement): void {
   const runB = btn(ICON.run, "Run", "Run the load flow and every study (F5)", "run");
   runB.classList.add("primary");
   const stale = h("span", "badge stale", "STALE");
   stale.title = "The case changed since the last run";
-  const resetB = btn(ICON.reset, "Reset", "Clear results and reload the example");
+  const resetB = btn(ICON.reset, "Reset", "Clear the results (an example is reloaded)");
 
-  const sel = h("select", "tb-select");
-  sel.title = "Example networks";
-  sel.setAttribute("aria-label", "Example networks");
-  const file = h("input");
-  file.type = "file";
-  file.accept = ".json,.gridlens.json,application/json";
-  file.hidden = true;
-  const fileMenu = menu("File", "Textbook data, open, save, download results", () => [
-    ["Enter textbook data...", () => void openWizard()],
-    ["Open project...", () => file.click()],
-    ["Save project", exportProject, !getState().case],
+  const file = casePicker();
+  let examples: string[] = [];
+  presets().then((n) => { examples = n; }).catch((e) => report(e, "Listing examples"));
+  const fileMenu = menu("File", "New case, open, import, examples, save", () => [
+    ["New case...", () => openNewCase()],
+    ["Open or import a file...", () => file.click()],
+    ["Enter textbook data (MVA, kV, ohm)...", () => void openWizard()],
+    ["Save project (.gridlens.json)", exportProject, !getState().case],
     ["Download results (.zip)", () => navigate("report"), !getState().results],
+    ["Examples", null],
+    ...examples.map((n): MenuItem => [n, () => void loadPreset(n)]),
   ]);
+  const caseName = h("span", "tb-case");
 
   const undoB = btn(ICON.undo, "Undo", "Undo the last change to the case (Ctrl+Z)", "undo");
   const redoB = btn(ICON.redo, "Redo", "Redo (Ctrl+Shift+Z or Ctrl+Y)", "redo");
   undoB.addEventListener("click", undo);
   redoB.addEventListener("click", redo);
 
-  bar.append(group(runB, stale, resetB), group(undoB, redoB), group(sel, fileMenu, file));
+  bar.append(group(runB, stale, resetB), group(undoB, redoB), group(fileMenu, file, caseName));
 
   runB.addEventListener("click", () => void run());
   resetB.addEventListener("click", () => void reset());
-  sel.addEventListener("change", () => void loadPreset(sel.value));
-  file.addEventListener("change", async () => {
-    const f = file.files?.[0];
-    file.value = "";
-    if (f) await importProject(f).catch((e) => report(e, `Opening ${f.name}`));
-  });
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "F5") {
@@ -338,32 +350,57 @@ export function mountToolbar(bar: HTMLElement): void {
     runB.disabled = !s.case;
     undoB.disabled = !canUndo();
     redoB.disabled = !canRedo();
-    if (s.case) {
-      if (![...sel.options].some((o) => o.value === s.case!.name)) {
-        const o = h("option", "", s.case.name);
-        o.value = s.case.name;
-        sel.prepend(o);
-      }
-      sel.value = s.case.name;
-    }
+    caseName.textContent = s.case ? s.case.name : "";
   };
   subscribe(paint);
   paint();
+}
 
-  presets().then((names) => {
-    sel.replaceChildren(...names.map((n) => {
-      const o = h("option", "", n);
-      o.value = n;
-      return o;
-    }));
-    if (!getState().case && names[0]) void loadPreset(names[0], false);
-    else if (getState().case && !names.includes(getState().case!.name)) {
-      const o = h("option", "", getState().case!.name);
-      o.value = getState().case!.name;
-      sel.prepend(o);
+// ---- new case dialog ---------------------------------------------------
+
+/** File > New case: name, base MVA, frequency, input units, and whether to
+ *  start on the diagram or in the tables. */
+export function openNewCase(): void {
+  const dlg = h("dialog", "wizard newcase");
+  const field = (label: string, input: HTMLElement, hint = "") => {
+    const r = h("label", "nc-row");
+    r.append(h("span", "nc-l", label), input, h("span", "nc-h", hint));
+    return r;
+  };
+  const num = (v: number) => Object.assign(h("input"), { type: "number", value: String(v), step: "any" });
+  const name = Object.assign(h("input"), { value: "New network" });
+  const base = num(100), freq = h("select"), units = h("select"), start = h("select");
+  freq.append(new Option("50 Hz", "50"), new Option("60 Hz", "60"));
+  units.append(new Option("Per unit on the system base", "pu"),
+    new Option("Actual: MW, MVAr, kV, ohm, uS", "actual"));
+  start.append(new Option("Draw it on the diagram", "draw"), new Option("Fill in the tables", "tables"));
+  const ok = h("button", "btn primary", "Create");
+  const cancel = h("button", "btn", "Cancel");
+  const row = h("div", "wz-btns");
+  row.append(cancel, ok);
+  dlg.append(h("div", "wz-title", "New case"),
+    field("Name", name),
+    field("System base", base, "MVA"),
+    field("Frequency", freq),
+    field("Data units", units, "Actual units are converted with each bus's base kV."),
+    field("Start by", start), row);
+  document.body.append(dlg);
+  const close = () => { dlg.close(); dlg.remove(); };
+  cancel.addEventListener("click", close);
+  dlg.addEventListener("cancel", close);
+  ok.addEventListener("click", () => {
+    const b = Number(base.value);
+    if (!(b > 0)) {
+      base.classList.add("bad");
+      base.focus();
+      return;
     }
-    paint();
-  }).catch((e) => report(e, "Listing examples"));
+    close();
+    newCase({ name: name.value.trim() || "New network", base: b, freq: Number(freq.value),
+              units: units.value as NewCase["units"], start: start.value as NewCase["start"] });
+  });
+  dlg.showModal();
+  name.select();
 }
 
 // ---- chrome ------------------------------------------------------------
@@ -413,13 +450,10 @@ export function mountChrome(read: HTMLElement, status: HTMLElement, outTabs: HTM
 
 // ---- start and hints ---------------------------------------------------
 
-/** First-run welcome: four ways to begin. Hidden once a case was chosen. */
+/** First-run welcome: ways to begin. Hidden once a case was chosen. */
 export function mountStart(host: HTMLElement): void {
   const box = h("div", "start");
-  const file = h("input");
-  file.type = "file";
-  file.accept = ".json,.gridlens.json,application/json";
-  file.hidden = true;
+  const file = casePicker();
   const examples = h("div", "start-btns");
   const card = (title: string, text: string, ...btns: HTMLElement[]) => {
     const c = h("div", "start-card");
@@ -430,38 +464,32 @@ export function mountStart(host: HTMLElement): void {
     return c;
   };
   const btn = (label: string, primary = false) => h("button", `btn${primary ? " primary" : ""}`, label);
-  const draw = btn("Start drawing", true);
-  draw.addEventListener("click", newNetwork);
+  const blank = btn("New case", true);
+  blank.addEventListener("click", () => openNewCase());
   const wiz = btn("Open the form", true);
-  const pick = btn("Choose a file");
-  const skip = h("button", "linklike", "Skip: continue with the current example");
   wiz.addEventListener("click", () => void openWizard());
+  const pick = btn("Choose a file", true);
   pick.addEventListener("click", () => file.click());
-  file.addEventListener("change", async () => {
-    const f = file.files?.[0];
-    file.value = "";
-    if (f) await importProject(f).catch((e) => report(e, `Opening ${f.name}`));
-  });
-  skip.addEventListener("click", () => setState({ started: true }));
   presets().then((names) => {
     examples.replaceChildren(...names.map((n) => {
-      const b = btn(n, true);
+      const b = btn(n);
       b.addEventListener("click", () => void loadPreset(n));
       return b;
     }));
   }).catch((e) => report(e, "Listing examples"));
   box.append(
     h("h2", "", "Welcome to GridLens"),
-    h("p", "start-lead", "Solve a power system, check that it is safe, find fault currents, and see the working step by step."),
+    h("p", "start-lead", "Solve any power system: load flow, safety checks, fault currents, and the working step by step."),
     (() => {
       const row = h("div", "start-cards");
-      row.append(card("Use an example", "Start from a ready-made network.", examples),
-        card("Draw a new network", "Start from one Slack bus and draw the buses, lines and loads.", draw),
-        card("Enter textbook data", "Type a question's data in MVA, kV and ohms.", wiz),
-        card("Open a file", "Load a saved .gridlens.json project.", pick, file));
+      row.append(
+        card("New case", "A blank network. Set the base MVA and units, then draw it or fill in the tables.", blank),
+        card("Textbook question", "Type the data as the book gives it: MVA, kV, ohms, MW.", wiz),
+        card("Open a file", "A saved project, a MATPOWER case (.m), an IEEE common format file or the CSV templates.", pick, file),
+        card("Examples", "Ready-made networks to explore.", examples));
       return row;
     })(),
-    h("p", "start-foot", "Then press Run (F5) and follow the steps on the left."), skip);
+    h("p", "start-foot", "Then press Run (F5) and follow the steps on the left."));
   host.append(box);
   const paint = (s: State) => { box.hidden = s.started; };
   subscribe(paint);

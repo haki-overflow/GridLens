@@ -11,12 +11,21 @@ import { h } from "./ui";
 // /api/layout (oneline.layout, the same as the Streamlit diagram); bus
 // colours from the last results. Wheel = zoom, drag = pan, Fit (Ctrl+0),
 // click a bus or line to select it.
+//
+// Semantic zoom: the d3 zoom transform t is NOT put on a <g>. Every point is
+// drawn at screen coordinates t.applyX(x), t.applyY(y), so strokes and text
+// keep their CSS pixel sizes and stay sharp at every zoom level. Redraws are
+// batched with requestAnimationFrame.
 
 interface Layout { cx: number[]; cy: number[]; w: number[]; routes: [number, number][][] }
+type Pt = [number, number];
 
 const BAND = (v: number, lo: number, hi: number) =>
   v < lo ? "var(--red)" : v > hi ? "var(--violet)"
     : v < lo + 0.02 || v > hi - 0.02 ? "var(--amber)" : "var(--text)";
+
+/** Symbol size in px for one diagram unit: follows the zoom, within limits. */
+const symUnit = (k: number) => Math.max(20, Math.min(k, 60));
 
 registerDoc("canvas", (el) => {
   const wrap = h("div", "canvas-wrap");
@@ -24,15 +33,19 @@ registerDoc("canvas", (el) => {
   const svg = d3.select(wrap).append("svg").attr("role", "img")
     .attr("aria-label", "One-line diagram");
   const defs = svg.append("defs");
-  const pat = defs.append("pattern").attr("id", "gl-grid").attr("width", 1).attr("height", 1)
-    .attr("patternUnits", "userSpaceOnUse").attr("class", "gridpat");
-  pat.append("line").attr("x1", 0).attr("y1", 0).attr("x2", 1).attr("y2", 0);
-  pat.append("line").attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 1);
-  const world = svg.append("g");
-  const grid = world.append("rect").attr("fill", "url(#gl-grid)");
-  const gBranch = world.append("g"), gBus = world.append("g"), gText = world.append("g");
+  const pat = defs.append("pattern").attr("id", "gl-grid").attr("patternUnits", "userSpaceOnUse")
+    .attr("class", "gridpat");
+  const patH = pat.append("line"), patV = pat.append("line");
+  const grid = svg.append("rect").attr("class", "gridrect").attr("width", "100%").attr("height", "100%")
+    .attr("fill", "url(#gl-grid)");
+  const gBranch = svg.append("g"), gBus = svg.append("g"), gText = svg.append("g");
+  let t = d3.zoomIdentity;
+  let frame = 0;
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(getState()); });
+  };
   const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([2, 400])
-    .on("zoom", (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => world.attr("transform", e.transform.toString()));
+    .on("zoom", (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => { t = e.transform; schedule(); });
   svg.call(zoom).on("dblclick.zoom", null);
 
   interface OutageData { k: number; sig: string | null; res: Rec[]; flows: Rec[] }
@@ -69,6 +82,7 @@ registerDoc("canvas", (el) => {
   let layoutSig: string | null = null;
   let token = 0;
   let fitted = false;
+  let drag: { i: number; x: number; y: number } | null = null;
 
   const fit = (animate = true) => {
     if (!layout) return;
@@ -78,10 +92,10 @@ registerDoc("canvas", (el) => {
     const ys = layout.cy;
     const x0 = Math.min(...xs) - 1.5, x1 = Math.max(...xs) + 1.5;
     const y0 = Math.min(...ys) - 2.4, y1 = Math.max(...ys) + 2;
-    const k = Math.min(box.width / (x1 - x0), box.height / (y1 - y0));
-    const t = d3.zoomIdentity.translate(box.width / 2, box.height / 2).scale(k)
+    const k = Math.min(box.width / (x1 - x0), box.height / (y1 - y0), 60);
+    const z = d3.zoomIdentity.translate(box.width / 2, box.height / 2).scale(k)
       .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
-    (animate ? svg.transition().duration(120) : svg).call(zoom.transform as never, t);
+    (animate ? svg.transition().duration(120) : svg).call(zoom.transform as never, z);
   };
   window.addEventListener("gl:fit", () => fit());
   new ResizeObserver(() => {
@@ -91,20 +105,38 @@ registerDoc("canvas", (el) => {
     }
   }).observe(wrap);
 
+  /** Grid lines stay 1px: the pattern tile is sized in screen pixels. */
+  const drawGrid = (on: boolean) => {
+    grid.style("display", on ? "inline" : "none");
+    if (!on) return;
+    let step = 0.5;
+    for (const s of [0.5, 1, 2, 5, 10, 20, 50]) {
+      step = s;
+      if (s * t.k >= 14) break;
+    }
+    const p = step * t.k;
+    pat.attr("width", p).attr("height", p).attr("x", t.x).attr("y", t.y);
+    patH.attr("x1", 0).attr("y1", 0.5).attr("x2", p).attr("y2", 0.5);
+    patV.attr("x1", 0.5).attr("y1", 0).attr("x2", 0.5).attr("y2", p);
+  };
+
   const draw = (s: State) => {
     for (const [k, b] of optBtns) {
       const on = s.view[k as "grid" | "flows" | "angles"];
       b.classList.toggle("on", on);
       b.setAttribute("aria-pressed", String(on));
     }
-    if (!layout || !s.case || layout.cx.length !== s.case.bus.length) {
-      gBranch.selectAll("*").remove();
-      gBus.selectAll("*").remove();
-      gText.selectAll("*").remove();
-      return;
-    }
+    drawGrid(s.view.grid);
+    gBranch.selectAll("*").remove();
+    gBus.selectAll("*").remove();
+    gText.selectAll("*").remove();
+    if (!layout || !s.case || layout.cx.length !== s.case.bus.length) return;
     const c = s.case;
     const L = layout;
+    const X = (x: number) => t.applyX(x), Y = (y: number) => t.applyY(y);
+    const u = symUnit(t.k);
+    const cxOf = (i: number) => (drag?.i === i ? drag.x : L.cx[i]!);
+    const cyOf = (i: number) => (drag?.i === i ? drag.y : L.cy[i]!);
     const fresh = s.results && caseSig(s.case) === s.solvedSig ? s.results : null;
     const sel = s.selection;
     const od = fresh && s.outage !== null && outageData && outageData.k === s.outage
@@ -116,12 +148,8 @@ registerDoc("canvas", (el) => {
       chip.textContent = `Outage: line ${l?.From}-${l?.To} tripped${od ? "" : " (solving...)"} - click to clear`;
       chip.hidden = false;
     } else chip.hidden = true;
-    const xs = L.cx.flatMap((x, i) => [x - L.w[i]! / 2, x + L.w[i]! / 2]);
-    grid.attr("x", Math.floor(Math.min(...xs)) - 50).attr("y", Math.floor(Math.min(...L.cy)) - 50)
-      .attr("width", 200).attr("height", 200).style("display", s.view.grid ? "inline" : "none");
 
-    const line = d3.line<[number, number]>();
-    gBranch.selectAll("*").remove();
+    const line = d3.line<Pt>().x((p) => X(p[0])).y((p) => Y(p[1]));
     L.routes.forEach((pts, k) => {
       const isSel = sel?.kind === "branch" && sel.index === k;
       const tripped = !!fresh && s.outage === k;
@@ -129,7 +157,7 @@ registerDoc("canvas", (el) => {
         .attr("d", line(pts));
       if (tripped) {
         const m = pts[Math.floor((pts.length - 1) / 2)]!, n2 = pts[Math.floor((pts.length - 1) / 2) + 1] ?? m;
-        gText.append("text").attr("class", "trip-x").attr("x", (m[0] + n2[0]) / 2).attr("y", (m[1] + n2[1]) / 2 + 0.2)
+        gText.append("text").attr("class", "trip-x").attr("x", X((m[0] + n2[0]) / 2)).attr("y", Y((m[1] + n2[1]) / 2) + 6)
           .attr("text-anchor", "middle").text("✕");
       }
       gBranch.append("path").attr("class", "branch hit").attr("d", line(pts))
@@ -140,53 +168,63 @@ registerDoc("canvas", (el) => {
         .append("title").text(`Line ${c.lines[k]?.From}-${c.lines[k]?.To}`);
     });
 
-    gBus.selectAll("*").remove();
-    gText.selectAll("*").remove();
     c.bus.forEach((b, i) => {
-      const x = L.cx[i]!, y = L.cy[i]!, w = L.w[i]!;
+      const x = cxOf(i), y = cyOf(i), w = L.w[i]!;
+      const xl = X(x - w / 2), xr = X(x + w / 2), yy = Y(y);
       const res = resRows?.[i];
       const v = res ? Number(res["V (pu)"]) : NaN;
       const colour = Number.isFinite(v) ? BAND(v, fresh!.vmin, fresh!.vmax) : "var(--muted)";
       const isSel = sel?.kind === "bus" && sel.index === i;
-      gBus.append("line").attr("class", "bar-line").attr("x1", x - w / 2).attr("x2", x + w / 2)
-        .attr("y1", y).attr("y2", y)
+      gBus.append("line").attr("class", "bar-line").attr("x1", xl).attr("x2", xr)
+        .attr("y1", yy).attr("y2", yy)
         .style("stroke", isSel ? "var(--accent)" : colour);
-      const hit = gBus.append("rect").attr("class", "bus-hit").attr("x", x - w / 2).attr("y", y - 0.35)
-        .attr("width", w).attr("height", 0.7)
+      const hit = gBus.append("rect").attr("class", "bus-hit").attr("x", xl - 3).attr("y", yy - 8)
+        .attr("width", xr - xl + 6).attr("height", 16)
         .on("click", (e: MouseEvent) => {
           e.stopPropagation();
           setState({ selection: { kind: "bus", index: i } });
-        })
-
+        });
       hit.append("title").text(`Bus ${i + 1} - drag to move`);
+      let grab: Pt = [0, 0];
       hit.call(d3.drag<SVGRectElement, unknown>()
-        .on("start", () => setState({ selection: { kind: "bus", index: i } }))
-        .on("drag", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
-          const [px, py] = d3.pointer(e.sourceEvent as MouseEvent, world.node());
-          L.cx[i] = Math.round(px * 2) / 2;
-          L.cy[i] = Math.round(py * 2) / 2;
-          draw(getState());
+        .on("start", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
+          const [ux, uy] = t.invert(d3.pointer(e.sourceEvent as MouseEvent, svg.node()));
+          grab = [ux - L.cx[i]!, uy - L.cy[i]!];
+          setState({ selection: { kind: "bus", index: i } });
         })
-        .on("end", () => commitPositions()));
-      const sx = x + w / 2 - 0.45;
+        .on("drag", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
+          const [ux, uy] = t.invert(d3.pointer(e.sourceEvent as MouseEvent, svg.node()));
+          drag = { i, x: Math.round((ux - grab[0]) * 2) / 2, y: Math.round((uy - grab[1]) * 2) / 2 };
+          schedule();
+        })
+        .on("end", () => {
+          if (!drag) return;
+          L.cx[i] = drag.x;
+          L.cy[i] = drag.y;
+          drag = null;
+          commitPositions();
+        }));
+      const sx = xr - 0.45 * u;
       if (b.Type === "Slack" || b.Type === "PV") {
-        gBus.append("line").attr("class", "sym").attr("x1", sx).attr("x2", sx).attr("y1", y).attr("y2", y - 0.9);
-        gBus.append("circle").attr("class", "sym").attr("cx", sx).attr("cy", y - 1.2).attr("r", 0.3);
-        gText.append("text").attr("class", "bus-label").attr("x", sx).attr("y", y - 1.08)
-          .attr("text-anchor", "middle").style("font-size", "0.3px").text("G");
-        gText.append("text").attr("class", "angle-label").attr("x", sx + 0.42).attr("y", y - 1.1).text(`G${i + 1}`);
+        gBus.append("line").attr("class", "sym").attr("x1", sx).attr("x2", sx).attr("y1", yy).attr("y2", yy - 0.9 * u);
+        gBus.append("circle").attr("class", "sym").attr("cx", sx).attr("cy", yy - 1.2 * u).attr("r", 0.3 * u);
+        gText.append("text").attr("class", "sym-label").attr("x", sx).attr("y", yy - 1.2 * u)
+          .attr("text-anchor", "middle").attr("dominant-baseline", "central").text("G");
+        gText.append("text").attr("class", "angle-label").attr("x", sx + 0.3 * u + 4).attr("y", yy - 1.2 * u)
+          .attr("dominant-baseline", "central").text(`G${i + 1}`);
       }
       if (Number(b.Pd) > 0) {
-        const lx = x - w / 2 + 0.45;
-        gBus.append("line").attr("class", "sym").attr("x1", lx).attr("x2", lx).attr("y1", y).attr("y2", y + 0.75);
+        const lx = xl + 0.45 * u;
+        gBus.append("line").attr("class", "sym").attr("x1", lx).attr("x2", lx).attr("y1", yy).attr("y2", yy + 0.75 * u);
         gBus.append("path").attr("class", "sym-load")
-          .attr("d", `M${lx - 0.17},${y + 0.75}L${lx + 0.17},${y + 0.75}L${lx},${y + 1.02}Z`);
-        gText.append("text").attr("class", "angle-label").attr("x", lx + 0.28).attr("y", y + 1.0).text(`Load ${i + 1}`);
+          .attr("d", `M${lx - 0.17 * u},${yy + 0.75 * u}L${lx + 0.17 * u},${yy + 0.75 * u}L${lx},${yy + 1.02 * u}Z`);
+        gText.append("text").attr("class", "angle-label").attr("x", lx + 0.17 * u + 4).attr("y", yy + 0.9 * u)
+          .attr("dominant-baseline", "central").text(`Load ${i + 1}`);
       }
-      gText.append("text").attr("class", "bus-label").attr("x", x - w / 2 + 0.05).attr("y", y - 0.2)
+      gText.append("text").attr("class", "bus-label").attr("x", xl + 2).attr("y", yy - 7)
         .text(Number.isFinite(v) ? `${i + 1}  ${v.toFixed(3)}` : `${i + 1}`);
       if (s.view.angles && res) {
-        gText.append("text").attr("class", "angle-label").attr("x", x - w / 2 + 1.0).attr("y", y + 0.5)
+        gText.append("text").attr("class", "angle-label").attr("x", xl + 0.9 * u).attr("y", yy + 15)
           .text(`${Number(res["Angle (deg)"]).toFixed(2)}°`);
       }
     });
@@ -196,15 +234,15 @@ registerDoc("canvas", (el) => {
         if (od && k === s.outage) return;
         const f = flowRows[od && s.outage !== null && k > s.outage ? k - 1 : k] as Rec | undefined;
         if (!f || pts.length < 2) return;
-        let best = 0, at: [number, number] = pts[0]!, horiz = false;
+        let best = 0, at: Pt = pts[0]!, horiz = false;
         for (let j = 1; j < pts.length; j++) {
           const a = pts[j - 1]!, b = pts[j]!;
           const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
           if (len > best) [best, at, horiz] = [len, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
             Math.abs(b[0] - a[0]) > Math.abs(b[1] - a[1])];
         }
-        gText.append("text").attr("class", "flow-label").attr("x", horiz ? at[0] : at[0] + 0.12)
-          .attr("y", horiz ? at[1] - 0.18 : at[1]).attr("text-anchor", horiz ? "middle" : "start")
+        gText.append("text").attr("class", "flow-label").attr("x", horiz ? X(at[0]) : X(at[0]) + 5)
+          .attr("y", horiz ? Y(at[1]) - 5 : Y(at[1])).attr("text-anchor", horiz ? "middle" : "start")
           .text(`${(Number(f.P_ij) * fresh.base).toFixed(1)} MW`);
       });
     }

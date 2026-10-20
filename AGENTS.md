@@ -27,9 +27,12 @@ working.py     ybus_parts, gauss_seidel_trace (alpha), newton_trace (analytical
 topics.py      textbook calculators: symcomp (phase <-> sequence), tline (ABCD),
                seqfaults (sequence networks, 3-phase / SLG / LL / DLG), dispatch
                (economic dispatch), units (real units -> per unit)
-gridcore.py    prep_case (validation), run_study, outage; the CASES presets and
-               COORDS; ai_report / lm_models (LM Studio). No Streamlit; used by
-               app.py and the API
+gridcore.py    prep_case (validation, islands), loadflow (fallback chain,
+               failure_hint), run_study, outage, line_loading; the CASES
+               examples; ai_report / lm_models (LM Studio). No Streamlit; used
+               by app.py and the API
+formats.py     case file readers: MATPOWER .m, IEEE common data format, CSV
+               templates -> GridLens case (per unit, bus rows, file numbers in Num)
 figures.py     palette from theme.css, matplotlib / Plotly styles, matplotlib
                charts, the interactive one-line diagram (layout, routing, hover).
                No Streamlit (the API imports it)
@@ -55,11 +58,13 @@ solver where they overlap.
 The original single-file version lives in `legacy/power_flow_methods.py`.
 
 ## Data model
-- **Bus DataFrame** columns: `Type` (Slack/PV/PQ), `V`, `Pg`, `Qg`, `Pd`, `Qd`, `Bs` (shunt susceptance). Optional: `Qmin`, `Qmax` (pu generator Q limits), `kV` (base kV), `x`, `y` (diagram position). The solver ignores the optional columns.
+- **Bus DataFrame** columns: `Type` (Slack/PV/PQ), `V`, `Pg`, `Qg`, `Pd`, `Qd`, `Bs` (shunt susceptance). Optional: `Gs` (shunt conductance, in the Ybus), `Va` (deg: the Slack's reference angle and the set-point start), `Qmin`, `Qmax` (pu generator Q limits), `kV` (base kV), `Num`, `Name` (labels; lines still refer to bus rows 1..N), `x`, `y` (diagram position).
+- Case setting `units`: "pu" (default) or "actual" (MW, MVAr, kV, ohm, uS); `topics.case_to_pu` converts per bus base kV inside prep_case, so everything after prep_case is per unit.
 - **Problem input tables** (real units) are defined in the `topics.py` units section; `units.to_pu` returns the bus/line DataFrames above plus `kv`, `zones`, `table`.
 - **Sequence data** (`topics.py`, sequence-fault section): gens `Bus, X1, X2, X0, Xn, Conn`; branches `From, To, Kind, X1, X2, X0, Conn From, Conn To`.
-- **Line DataFrame** columns: `From`, `To` (1-based bus numbers), `R`, `X`, `B`, `Tap` (off-nominal ratio, 1 = none).
-- `solve_loadflow(bus, lines, method, tol)` returns `(res, flows, ok, hist)`:
+- **Line DataFrame** columns: `From`, `To` (1-based bus rows), `R`, `X`, `B`, `Tap` (off-nominal ratio, 1 = none). Optional: `Shift` (deg, phase shifter at the From side, t = a e^{j shift}), `Rate` (MVA, 0 = none), `InService` (0 = out: stays in the table, no flow, skipped by N-1), `Kind` ("line" / "trafo", drawing only). `solver.branch_y` gives a branch's four admittances; with Shift = 0 it is exactly the old tap model.
+- Islands: one Slack per island; prep_case names islands without one. The solver's Jacobian is block-diagonal across islands, so solve_loadflow needs only "at least one Slack".
+- `solve_loadflow(bus, lines, method, tol, init="flat", damp=1.0, max_iter=None)` returns `(res, flows, ok, hist)` (init "setpoint" starts from V and Va; damp < 1 shortens Newton steps). The app calls `gridcore.loadflow`, which tries the chosen method first (identical when it converges) and then `ATTEMPTS`:
   - `res`: Bus, V (pu), Angle (deg), P_inj, Q_inj
   - `flows`: From, To, P_ij, Q_ij, P_ji, Q_ji, Loss_P, Loss_Q
   - `ok`: converged flag, `hist`: error per iteration (`len(hist) - 1` = iterations)
@@ -85,8 +90,9 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 ## Known issues / planned fixes (do as separate changes, not mixed into refactors)
 1. (fixed in v1.6) Gauss-Seidel now honours `tol` in `solve_loadflow`, so the method comparison is fair.
 2. (fixed in v1.3) `ai_report` now raises on HTTP errors.
-3. The Fault levels page (`studies.fault_analysis`) still uses a single base kV; the Unsymmetrical faults page (`topics.py`, sequence-fault section) uses each bus's own kV.
-4. Numerical Jacobian is slow on large cases; an analytical one exists in `working.jacobian` if the solver ever needs it.
+3. (fixed in v1.6) Fault kA uses each bus's own base kV where the case has one (the input is the default for the rest).
+4. Numerical Jacobian is slow on large cases (IEEE 118 full study ~25 s, mostly N-1); an analytical one exists in `working.jacobian`. Switching would change NR results in the last bits, so the golden snapshots would need regenerating with the user's OK.
+7. MATPOWER divides a transformer's charging by tap²; GridLens keeps B/2 unscaled at both ends (only differs for a tapped branch with B > 0).
 5. PV Q limits are optional (`solver.solve_with_qlimits`, default off) and apply to the main load flow only, not to N-1 / P-V / the solver check.
 6. Sequence networks are reactance-only; Δ-Y 30° phase shifts are not modelled.
 
@@ -123,3 +129,12 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - Drawing tools on the canvas: Select (V), Bus (B), Line (L), Transformer (T, adds line column `Kind = "trafo"`, which prep_case passes through and the solver ignores), Generator (G), Load (D), Delete (Del); Esc = Select. The first canvas edit writes `x`, `y` to every bus. When `/api/validate` reports problems the canvas skips `/api/layout`, draws from `x`, `y` with simple connectors and shows a warning chip.
 - Shared case actions live in `app.ts` (`addBus`, `addLine`, `delBus`, `delLine`, `editBus`, `editLine`, `newNetwork`); the canvas, Properties and Data tables all use them. Each `setState({case})` pushes one undo step (history of 50; a drag pushes once, on drag end); `undo`/`redo` (Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y, toolbar buttons) swap the case without pushing.
 - Network > Data tables (doc `case-tables` in `documents.ts`): bus and line tables built with `rowEditor` (index, select, numeric columns, cell/add/delete/paste callbacks); bad cells are marked from the `/api/validate` messages. `tools/walkthrough.py` also draws a network, solves it, edits Pd in the tables and zooms.
+
+## v1.6: any case
+- Golden rule for v1.6+: `tests/test_golden_api.py` snapshots every study endpoint on both examples (`tests/data/api_golden.json`); a change that moves a number must be an approved maths change, then `GOLDEN_WRITE=1 pytest tests/test_golden_api.py`. `tests/test_core.py` compares the old columns only (new columns are allowed).
+- `/api/import` (formats.py) returns a case with taps and shunts on; the web File menu (New case..., Open or import a file..., Examples) replaces the toolbar example select; no example loads by itself.
+- Web settings gain `init`, `fallback`, `freq`, `units` (Properties > Study settings / Advanced); web defaults have taps and shunts on (the API defaults stay off for the snapshots).
+- Data tables: Buses / Branches / Generators / Loads / Shunts (`case-tables` in documents.ts); Generators, Loads and Shunts are views over bus rows (`busView`); headers carry units from `unitLabels`.
+- Layout: `figures.layout` uses `_layered` up to `BIG` = 24 buses and `_stress_rows` (stress majorization on hop distances, rows of equal count, packed) with `_straight` branches above; the canvas writes only bus numbers when zoomed out and shrinks symbols (`symUnit` 8-60 px).
+- Chrome colours: selection is `--hdr` fill with an `--axis` border; Run is the only accent (`--sel` fill); blue (`--accent`) remains only for the selected element on the diagram.
+- Messages: the log holds the current run only (cleared by Run, a new case, and the Clear button) and is not saved to localStorage.

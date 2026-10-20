@@ -5,7 +5,7 @@ A Python tool that solves an N-bus power system and turns the results into somet
 ## Features
 
 - Three load flow methods: Newton-Raphson, Fast Decoupled (XB), Gauss-Seidel.
-- Two editable presets: 5-bus demo and IEEE 14-bus.
+- **Any network** (v1.6): start a blank case and draw it or fill in the tables, in per unit or in actual units (MW, MVAr, kV, Ω, µS); import MATPOWER `.m`, IEEE common data format and CSV files. The 5-bus demo and IEEE 14-bus are examples in the File menu.
 - N-1 contingency sweep: each line removed in turn, case re-solved, ranked worst-first.
 - Three-phase fault analysis at every bus via the Zbus matrix.
 - One-line diagram in the style of planning tools (bus bars, generator and load symbols, voltage-band colouring, MW on each branch), plus voltage-profile and post-fault charts.
@@ -49,7 +49,9 @@ GridLens/
 ├── working.py      Ybus terms, traced GS / NR (analytical J1..J4) / FD, worked-answer text
 ├── topics.py       textbook calculators: symmetrical components, line ABCD, sequence faults
 │                   (SLG / LL / DLG), economic dispatch, real units -> per unit
-├── gridcore.py     validation (prep_case), run_study, outage, the CASES presets, LM Studio report
+├── gridcore.py     validation (prep_case, islands), loadflow (fallback + failure hints), run_study,
+│                   outage, line loading, the example cases, LM Studio report
+├── formats.py      case file readers: MATPOWER .m, IEEE common data format, CSV templates
 ├── theme.css       the dark palette and all styling as CSS variables
 ├── api/            FastAPI server (JSON over the modules above); docs at /docs
 ├── web/            PSCAD-style workspace (Vite + TypeScript + D3), 8 files in web/src
@@ -101,7 +103,11 @@ flowchart TD
 | Convergence flag or iteration counts look off | `solver.py` (convergence history handling) |
 | N-1 table wrong or full of FAILED rows | `studies.py` (`contingency`) |
 | Fault currents or kA numbers wrong | `studies.py` (`fault_analysis`), base kV input in `app.py` |
-| One-line diagram layout, hover or click broken | `figures.py` (`layout`, `figure`, `inspect`), `gridcore.COORDS` |
+| One-line diagram layout, hover or click broken | `figures.py` (`layout`; `_layered` for small networks, `_stress_rows` + `_straight` above 24 buses), `web/src/canvas.ts` |
+| An imported file reads wrong | `formats.py` (`read_matpower`, `read_cdf`, `read_csv`) |
+| Actual-unit case converts wrong | `topics.py` (`case_to_pu`) |
+| "Did not converge" hint or fallback wrong | `gridcore.py` (`loadflow`, `ATTEMPTS`, `failure_hint`) |
+| Islands or validation messages wrong | `gridcore.py` (`prep_case`, `_islands`) |
 | Profile / history / P-V / fault figures broken | `figures.py` |
 | Theme, banner, badges or metric cards look wrong | `theme.css`, `ui.py` (`inject`), `figures.py` (`mpl_style`, `plotly_style`), `.streamlit/config.toml` |
 | Report fails, or no models listed | `gridcore.py` (`lm_models`, `ai_report`); check LM Studio on port 1234 |
@@ -137,7 +143,9 @@ Bus table:
 | `V` | Voltage setpoint (Slack and PV), initial guess for PQ |
 | `Pg`, `Qg` | Generator injection |
 | `Pd`, `Qd` | Load |
-| `Bs` | Shunt susceptance |
+| `Bs`, `Gs` | Shunt susceptance and conductance (per unit, or MVAr / MW at 1 pu in actual units) |
+| `Num`, `Name` | Optional label: the bus number from the file / book, and a name (lines still refer to rows 1..N) |
+| `Va` | Optional angle (deg): the Slack's reference angle, and the start for the set-point initial guess |
 | `Qmin`, `Qmax` | Optional generator Q limits (shown and used with Generator Q limits on) |
 | `kV` | Optional base kV (filled by Problem input; used for kA on the Unsymmetrical faults page) |
 | `x`, `y` | Optional one-line diagram position (y grows downward) |
@@ -150,6 +158,12 @@ Line table:
 | `R`, `X` | Series resistance and reactance |
 | `B` | Total line charging susceptance, split B/2 at each end |
 | `Tap` | Off-nominal tap ratio, 1 = none |
+| `Shift` | Optional phase shift (deg) at the From side |
+| `Rate` | Optional MVA rating (0 = none): loading % and N-1 overloads |
+| `InService` | Optional: 0 / no = out of service (kept in the table, carries no flow) |
+| `Kind` | Optional `line` or `trafo` (drawing symbol; the maths uses Tap and Shift) |
+
+With case setting `units = actual`, bus powers are MW / MVAr, branch R and X are Ω (a transformer's referred to its From side) and B is µS, converted per unit on each From bus's base kV (`kV` is then required).
 
 Problem input tables (real units) are documented at the top of `topics.py`: buses (MW, MVAr, |V|, Qmin/Qmax, shunt MVAr), lines (Ω or Ω/km with a length, B in µS, µS/km or total charging MVAr) and transformers (rated kV on both sides, MVA rating, R/X in pu on their own rating, tap at the From side).
 
@@ -158,17 +172,17 @@ Results: `res` has `Bus`, `V (pu)`, `Angle (deg)`, `P_inj`, `Q_inj`; `flows` has
 ## Testing
 
 - `legacy/check_refactor.py` compared the split modules with the original single file; `tests/test_core.py` (golden results) replaced it.
-- `./venv/bin/python -m pytest` runs the suite in `tests/` (42 tests): per-unit conversion and zones; Q limits (identical results when no limit binds, PV->PQ at Qmax); Ybus terms sum to `build_ybus` and Ybus is symmetric; the analytical Jacobian matches a numerical one; the GS (α = 1, exact), NR and FD traces end on `solve_loadflow`'s answer; GS/NR/FD agree within 1e-4 pu; SLG current = 3Vf/(Z1+Z2+Z0+3Zf), LL/DLG boundary conditions, Δ-Yg zero sequence, per-bus kA; symmetrical-component identities; dispatch (closed-form λ, limits, coordination equations with losses); ABCD reciprocity AD − BC = 1.
+- `./venv/bin/python -m pytest` runs the suite in `tests/` (126 tests in v1.6). v1.6 adds `test_golden_api.py` (every study endpoint on both examples must return exactly what v1.5 returned), `test_anycase.py` (validation, islands, phase shifter, shunt G, in-service flags, fallback chain, failure hints, ratings, actual units, Saadat Example 6.7 entered in ohms and MW, tap transformer and Q-limited generator against closed forms) and `test_formats.py` (MATPOWER case9 and case14 against MATPOWER's published runpf answers, case118, IEEE CDF, CSV, big-network layout). Earlier tests: per-unit conversion and zones; Q limits (identical results when no limit binds, PV->PQ at Qmax); Ybus terms sum to `build_ybus` and Ybus is symmetric; the analytical Jacobian matches a numerical one; the GS (α = 1, exact), NR and FD traces end on `solve_loadflow`'s answer; GS/NR/FD agree within 1e-4 pu; SLG current = 3Vf/(Z1+Z2+Z0+3Zf), LL/DLG boundary conditions, Δ-Yg zero sequence, per-bus kA; symmetrical-component identities; dispatch (closed-form λ, limits, coordination equations with losses); ABCD reciprocity AD − BC = 1.
 - `python tools/check_contrast.py` checks every text/background pair of the theme against WCAG AA (4.5:1).
-- Textbook worked examples are not in the suite yet: they need the book's data and printed answers.
+- `python tools/walkthrough.py` (workspace running) clicks through every view, draws a network, and enters Saadat Example 6.7 from a blank case in ohms and MW; `python tools/shots.py` screenshots every view at 1366x768.
 
 ## Limitations
 
 - Generator Q limits (optional) apply to the main load flow only; N-1, P-V and the solver check still solve without them.
-- The Fault levels page still uses a single base kV for kA; the Unsymmetrical faults page uses each bus's own base kV.
+- The Streamlit app (`app.py`) keeps its v1.5 features; New case, actual units, file import and the new tables are in the web workspace only.
 - Sequence networks are reactance-only and Δ-Y transformer phase shifts (30°) are not modelled.
-- The solver's Newton-Raphson uses a central-difference numerical Jacobian (slower on large cases); the Iterations page uses the analytical one.
-- Gauss-Seidel is called without the `tol` argument inside `solve_loadflow`, so it always runs with its own default tolerance and the method comparison is not exactly at one shared tolerance.
+- The solver's Newton-Raphson uses a central-difference numerical Jacobian, so big cases are slow: the full IEEE 118 study (load flow, 186 N-1 outages, PV curve, 3-method check) takes about 25 s. The Iterations page uses the analytical Jacobian.
+- MATPOWER scales line charging by 1/tap² on transformers; GridLens keeps B/2 unscaled at both ends. It only matters for a transformer with both a tap and charging B (none in the MATPOWER test cases).
 
 ## License and credits
 
@@ -244,3 +258,13 @@ Choose **Draw a new network** on the Start screen (one Slack bus, Bus tool on), 
 Esc returns to Select. Delete / Backspace removes the selection. Ctrl+Z undoes (up to 50 steps), Ctrl+Shift+Z or Ctrl+Y redoes; Undo and Redo are also in the toolbar. Ctrl+0 fits the diagram. An unfinished drawing stays on screen with a warning chip that says what is missing. Press Run (F5) to solve.
 
 **Data tables** (Network > Data tables) holds the same case as fill-in tables, like the Streamlit version: edit any cell, add or delete rows, or paste a block copied from Excel or a textbook PDF into a cell to fill the rows from there. Bad cells turn red with the validation message. Data in MVA, kV and ohms goes through File > Enter textbook data....
+
+## v1.6: solve any problem
+
+GridLens is no longer tied to its two example networks.
+
+1. **Start a case.** File > New case: name, system base MVA, frequency, data units (per unit, or actual MW / MVAr / kV / Ω / µS), and whether to start on the diagram or in the tables. Or File > Open or import a file: a `.gridlens.json` project, a MATPOWER `.m` case, an IEEE common data format file, or the CSV templates (pick the bus and line CSV together). The examples are under File > Examples.
+2. **Enter the data.** Network > Data tables has Buses, Branches, Generators, Loads and Shunts tabs with the units in the headers; paste a block from Excel or a PDF into a cell. Or draw it with the tools on the diagram. Both edit the same case (Ctrl+Z undoes).
+3. **Run (F5).** Problems are named before solving (one Slack per island, duplicate bus numbers, lines to missing buses, X = 0, base values <= 0, islands without a Slack). If the chosen method does not converge, GridLens tries Newton-Raphson from a flat and a set-point start, a damped Newton-Raphson, Fast Decoupled and Gauss-Seidel, and says which one solved it; if none does, it names the worst bus and the likely reason (load too high, MW typed as per unit, voltage collapse).
+
+Also new: phase shifters, shunt conductance, in-service flags, MVA ratings (loading % and N-1 overloads), parallel branches, separate islands each with its own Slack, fault kA from each bus's own base kV, results pages with plots beside the tables, and a layout for big networks (IEEE 118 included). Selection colours are neutral grays; the message log shows the current run and has a Clear button.

@@ -397,7 +397,9 @@ export async function run(): Promise<void> {
   running = true;
   const sig = caseSig(c);
   clearMessages();   // the log shows the current run only
-  log("info", `Running study (${c.settings.method}) on ${c.name}...`);
+  log("info", `Running study (${c.settings.method}) on ${c.name}...` + (c.lines.length > 60
+    ? ` The line-outage (N-1) and PV studies re-solve the case many times: about ${Math.max(5, Math.round(c.lines.length * c.bus.length / 900))} s for ${c.bus.length} buses.`
+    : ""));
   try {
     const out = await post<Study>("/api/study", c);
     setState({ results: out, solvedCase: c, solvedSig: sig });

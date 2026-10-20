@@ -221,3 +221,52 @@ def test_parallel_branches_get_unique_names():
     assert branch_names(lines)[-1] == "1-2 (2)"
     res, *_ = solve_loadflow(B5, lines)   # parallel lines simply add in Ybus
     assert res["V (pu)"].notna().all()
+
+
+# ------------------------------------------------------- step 5: actual units
+SAADAT_67_PU = (
+    pd.DataFrame({"Type": ["Slack", "PQ", "PQ"], "V": [1.05, 1.0, 1.0], "Pg": [0.0] * 3,
+                  "Qg": [0.0] * 3, "Pd": [0.0, 2.566, 1.386], "Qd": [0.0, 1.102, 0.452]}),
+    pd.DataFrame({"From": [1, 1, 2], "To": [2, 3, 3], "R": [0.02, 0.01, 0.0125],
+                  "X": [0.04, 0.03, 0.025], "B": [0.0] * 3}))
+Z230 = 230.0 ** 2 / 100.0          # 529 ohm
+SAADAT_67_ACTUAL = (
+    pd.DataFrame({"Type": ["Slack", "PQ", "PQ"], "V": [1.05, 1.0, 1.0], "kV": [230.0] * 3,
+                  "Pg": [0.0] * 3, "Qg": [0.0] * 3, "Pd": [0.0, 256.6, 138.6],
+                  "Qd": [0.0, 110.2, 45.2]}),
+    pd.DataFrame({"From": [1, 1, 2], "To": [2, 3, 3], "R": [10.58, 5.29, 6.6125],
+                  "X": [21.16, 15.87, 13.225], "B": [0.0] * 3}))
+
+
+def test_actual_units_case_equals_the_per_unit_case():
+    pb, pl, probs, _ = _prep(*SAADAT_67_PU)
+    ab, al, aprobs, _ = _prep(*SAADAT_67_ACTUAL, units="actual")
+    assert probs == [] and aprobs == []
+    assert np.allclose(al[["R", "X"]].to_numpy(), pl[["R", "X"]].to_numpy(), atol=1e-12)
+    assert np.allclose(ab["Pd"], pb["Pd"]) and np.allclose(ab["Qd"], pb["Qd"])
+
+
+def test_saadat_example_6_7_from_ohms_and_megawatts():
+    # Saadat, Power System Analysis, Example 6.7: V2 = 0.98 - j0.06, V3 = 1.0 - j0.05,
+    # slack S1 = 409.5 + j189 MVA, so total loss = 409.5 - (256.6 + 138.6) = 14.3 MW.
+    b, l, probs, _ = _prep(*SAADAT_67_ACTUAL, units="actual")
+    assert probs == []
+    out = gridcore.run_study(b, l, "Newton-Raphson", 1e-10, 100.0, 0.95, 1.1)
+    V = out["res"]["V (pu)"].to_numpy() * np.exp(1j * np.radians(out["res"]["Angle (deg)"].to_numpy()))
+    assert V[1] == pytest.approx(0.98 - 0.06j, abs=1e-5)
+    assert V[2] == pytest.approx(1.00 - 0.05j, abs=1e-5)
+    assert out["slack_p"] == pytest.approx(409.5, abs=0.05)
+    assert out["res"]["Q_inj"].iloc[0] * 100 == pytest.approx(189.0, abs=0.05)
+    assert out["loss"] == pytest.approx(14.3, abs=0.05)
+
+
+def test_actual_units_need_kv():
+    bus, lines = SAADAT_67_ACTUAL
+    probs = _prep(bus.drop(columns="kV"), lines, units="actual")[2]
+    assert probs[0].startswith("Actual units need the base kV of every bus")
+
+
+def test_line_between_voltage_levels_is_flagged():
+    bus, lines = SAADAT_67_ACTUAL
+    notes = _prep(bus.assign(kV=[230.0, 230.0, 132.0]), lines, units="actual")[3]
+    assert any("not marked as a transformer" in n for n in notes)

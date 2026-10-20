@@ -13,6 +13,7 @@ import pandas as pd
 from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
 from studies import branch_names, contingency, pv_curve
+from topics import case_to_pu
 from studies import outage as _outage
 
 
@@ -26,9 +27,17 @@ def prep_case(bus_df, lines_df, cfg):
         for c in cols:
             if c not in df:
                 df[c] = pd.Series(dtype=object)
+    notes = []
+    if cfg.get("units", "pu") == "actual" and len(b):
+        base = float(cfg.get("base", 100.0) or 0)
+        if base <= 0:
+            return b, l, ["System base MVA must be greater than 0."], []
+        b, l, _, conv_probs, notes = case_to_pu(b, l, base)
+        if conv_probs:
+            return b, l, conv_probs, notes
     l = l.dropna(subset=["From", "To"]).reset_index(drop=True)
     b = b.dropna(subset=["Type"]).reset_index(drop=True)
-    probs, notes = [], []
+    probs = []
     if len(l) < len(lines_df):
         notes.append("Line rows without From/To were ignored.")
     if len(b) < len(bus_df):

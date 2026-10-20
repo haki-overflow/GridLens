@@ -479,6 +479,61 @@ def to_pu(sbase, ref_bus, ref_kv, buses, lines, trafos):
     return dict(bus=pu, lines=lpu, kv=kv, zones=zt, table=table)
 
 
+# ------------------------------------------- case in actual units -> pu
+# A whole case typed in actual units (case setting units = "actual"), the
+# way textbook questions give it. Each bus carries its base kV; every branch
+# is converted on the base of its From bus:
+#   bus     V (pu), Pg Pd Qmin... in MW / MVAr, Bs / Gs in MVAr / MW drawn at
+#           1 pu voltage (Bs > 0 = capacitor), kV = base kV
+#   branch  R, X in ohm (a transformer: referred to its From side), B in uS
+#           (total line charging), Rate in MVA, Tap and Shift unchanged
+# Zbase = kV_from^2 / Sbase, Ybase = 1 / Zbase, Pbase = Sbase.
+
+BUS_MW = ("Pg", "Qg", "Pd", "Qd", "Qmin", "Qmax", "Bs", "Gs")
+
+
+def case_to_pu(bus, lines, sbase):
+    """Actual-unit case -> per-unit (bus, lines, table, problems, notes)."""
+    b, l = bus.copy(), lines.copy()
+    probs, notes, rows = [], [], []
+    kv = _num(b, "kV", np.nan)
+    missing = [i + 1 for i, v in enumerate(kv) if not np.isfinite(v) or v <= 0]
+    if missing:
+        probs.append("Actual units need the base kV of every bus (column kV); missing "
+                     "or not positive at bus rows " + ", ".join(map(str, missing)) + ".")
+        return b, l, pd.DataFrame(), probs, notes
+    for c in BUS_MW:
+        if c in b:
+            given = pd.to_numeric(b[c], errors="coerce")
+            b[c] = given / sbase
+    rows.append(("Bus powers", "MW, MVAr", f"S base = {sbase:g} MVA", "divide by S base"))
+    zb = kv ** 2 / sbase
+    f = pd.to_numeric(l["From"], errors="coerce").fillna(0).astype(int).to_numpy() \
+        if "From" in l else np.zeros(0, int)
+    t = pd.to_numeric(l["To"], errors="coerce").fillna(0).astype(int).to_numpy() \
+        if "To" in l else np.zeros(0, int)
+    ok = (f >= 1) & (f <= len(b)) & (t >= 1) & (t <= len(b))
+    z = np.where(ok, zb[np.clip(f, 1, len(b)) - 1], np.nan)
+    for c in ("R", "X"):
+        if c in l:
+            l[c] = _num(l, c) / z
+    if "B" in l:
+        l["B"] = _num(l, "B") * 1e-6 * z
+    for k in np.flatnonzero(ok):
+        name = f"{f[k]}-{t[k]}"
+        kf, kt = kv[f[k] - 1], kv[t[k] - 1]
+        trafo = str(l["Kind"].iloc[k]).lower() == "trafo" if "Kind" in l else False
+        if abs(kf - kt) > 0.01 * max(kf, kt) and not trafo:
+            notes.append(f"Branch {name} joins {kf:g} kV and {kt:g} kV buses but is not "
+                         "marked as a transformer (Kind = trafo); its ohms were referred to "
+                         "the From side.")
+        rows.append((f"Branch {name}", "ohm, uS", f"Z base = {kf:g}² / {sbase:g} = "
+                     f"{zb[f[k] - 1]:.4g} Ω", f"R = {l['R'].iloc[k]:.5g}, X = "
+                     f"{l['X'].iloc[k]:.5g}, B = {l['B'].iloc[k] if 'B' in l else 0:.5g} pu"))
+    table = pd.DataFrame(rows, columns=["Item", "Given in", "Base", "Per unit"])
+    return b, l, table, probs, notes
+
+
 UNITS_EXAMPLE = dict(
     sbase=100.0, ref_bus=1, ref_kv=11.0,
     buses=pd.DataFrame({

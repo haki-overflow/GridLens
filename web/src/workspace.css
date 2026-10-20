@@ -494,3 +494,5 @@ dialog.newcase { width: min(520px, 94vw); padding: 16px 18px; }
 .minichart .reflabel { fill: var(--red); font-size: 10px; }
 .minichart text { fill: var(--muted); font-size: 11px; }
 .minichart .axis text { fill: var(--muted); font-size: 10px; }
+
+.sym.dot { fill: var(--text); }   /* a generator seen from far away */

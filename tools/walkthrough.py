@@ -6,6 +6,9 @@
    from the Slack bus -> a load -> Run (F5) -> SOLVED. Then Network > Data
    tables: change Pd, Run again and check the result changed. Zoom the
    diagram with the mouse wheel and check the labels keep their pixel size.
+3. Textbook: File > New case in actual units (MW, kV, ohm), fill the tables by
+   pasting Saadat Example 6.7 (3 buses at 230 kV), Run, check the book's
+   answer (V2 = 0.98 - j0.06, V3 = 1.0 - j0.05), then the fault levels.
 
 Needs the workspace running (./run_workspace.sh). Fails on a console error,
 a page that scrolls, or a step that does not happen. CHROME env var
@@ -136,12 +139,62 @@ def draw(b, bad):
     ctx.close()
 
 
+def paste(pg, sel, text):
+    """Paste a block (as copied from Excel) into one table cell."""
+    pg.evaluate("""([s, t]) => { const el = document.querySelector(s); el.focus();
+        const dt = new DataTransfer(); dt.setData('text/plain', t);
+        el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }""",
+                [sel, text])
+
+
+SAADAT_BUS = ("1\tSlack\tSlack\t230\t1.05\t0\t0\t0\t0\t0\t0\n"
+              "2\tLoad A\tPQ\t230\t1\t256.6\t110.2\t0\t0\t0\t0\n"
+              "3\tLoad B\tPQ\t230\t1\t138.6\t45.2\t0\t0\t0\t0")
+SAADAT_LINES = "1\t2\t10.58\t21.16\t0\t1\n1\t3\t5.29\t15.87\t0\t1\n2\t3\t6.6125\t13.225\t0\t1"
+
+
+def textbook(b, bad):
+    ctx = b.new_context(viewport={"width": 1366, "height": 768})
+    pg = ctx.new_page()
+    watch(pg, bad)
+    pg.goto(URL)
+    pg.get_by_role("button", name="New case").first.click()
+    dlg = pg.locator("dialog.newcase")
+    dlg.locator("input").first.fill("Saadat Example 6.7")
+    dlg.locator("select").nth(1).select_option("actual")
+    dlg.locator("select").nth(2).select_option("tables")
+    pg.get_by_role("button", name="Create").click()
+    pg.wait_for_selector('[data-t="bus"][data-c="Num"]')
+    paste(pg, '[data-t="bus"][data-r="0"][data-c="Num"]', SAADAT_BUS)
+    need(state(pg, "case.bus.length") == 3, "Textbook: 3 buses pasted in MW and kV", bad)
+    pg.locator(".subtabs button", has_text="Branches").click()
+    pg.locator(".subpane.on button", has_text="+ Add row").click()
+    pg.wait_for_selector('[data-t="line"][data-r="0"][data-c="From"]')
+    paste(pg, '[data-t="line"][data-r="0"][data-c="From"]', SAADAT_LINES)
+    need(state(pg, "case.lines.length") == 3, "Textbook: 3 lines pasted in ohms", bad)
+    pg.keyboard.press("F5")
+    pg.wait_for_selector(SOLVED, timeout=30000)
+    res = state(pg, "results.res")
+    import cmath
+    v = [r["V (pu)"] * cmath.exp(1j * cmath.pi * r["Angle (deg)"] / 180) for r in res]
+    need(abs(v[1] - (0.98 - 0.06j)) < 1e-4 and abs(v[2] - (1.0 - 0.05j)) < 1e-4,
+         f"Textbook: book answer V2 = {v[1]:.4f}, V3 = {v[2]:.4f}", bad)
+    pg.locator(".flow-list > *", has_text="Short circuit").first.click()
+    pg.locator(".ws-centre .tabs [role=tab]", has_text="Quick").first.click()
+    pg.wait_for_selector(".doc.on .minichart, .minichart", timeout=15000)
+    head = pg.locator("div[class*=headline]").first.inner_text()
+    need("kA" in head, "Textbook: fault levels: " + head, bad)
+    need(not scrolls(pg), "Textbook: page does not scroll", bad)
+    ctx.close()
+
+
 def main() -> int:
     bad: list[str] = []
     with sync_playwright() as p:
         b = p.chromium.launch(executable_path=CHROME)
         tour(b, bad)
         draw(b, bad)
+        textbook(b, bad)
         b.close()
     print("problems:", bad or "none")
     return 1 if bad else 0

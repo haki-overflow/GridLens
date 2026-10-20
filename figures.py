@@ -334,6 +334,115 @@ def _layered(n, edges, types, width):
     return cx, cy
 
 
+# ------------------------------------------------ large networks (N > BIG)
+# Buses that are electrically close are drawn close: stress majorization on
+# the hop distances (classical MDS start, SMACOF iterations, deterministic),
+# then the buses are dealt into rows of equal count (top to bottom by y) and
+# packed left to right by x without overlaps. Branches are straight lines
+# between the bars; the elbow routing above is kept for small networks.
+BIG = 24
+ROW_BIG = 4.5     # row pitch for large networks
+GAP_BIG = 1.6     # gap between bars in a row
+
+
+def _hops(n, edges):
+    adj = [[] for _ in range(n)]
+    for a, b in edges:
+        adj[a].append(b)
+        adj[b].append(a)
+    D = np.full((n, n), np.inf)
+    for s in range(n):
+        D[s, s] = 0
+        todo = [s]
+        while todo:
+            nxt = []
+            for i in todo:
+                for j in adj[i]:
+                    if D[s, j] == np.inf:
+                        D[s, j] = D[s, i] + 1
+                        nxt.append(j)
+            todo = nxt
+    fin = D[np.isfinite(D)]
+    D[~np.isfinite(D)] = (fin.max() if fin.size else 1) + 2   # islands: a little apart
+    return D
+
+
+def _stress(D, iters=300):
+    n = len(D)
+    J = np.eye(n) - 1.0 / n
+    vals, vecs = np.linalg.eigh(-0.5 * J @ (D ** 2) @ J)
+    X = vecs[:, -2:][:, ::-1] * np.sqrt(np.maximum(vals[-2:][::-1], 1e-9))
+    X *= np.where(X[np.abs(X).argmax(axis=0), [0, 1]] < 0, -1, 1)   # fixed signs
+    W = np.zeros_like(D)
+    off = D > 0
+    W[off] = 1.0 / D[off] ** 2
+    V = -W.copy()
+    V[np.diag_indices(n)] = W.sum(axis=1)
+    Vp = np.linalg.pinv(V)
+    for _ in range(iters):
+        dist = np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
+        np.fill_diagonal(dist, 1.0)
+        Bm = -W * D / np.maximum(dist, 1e-9)
+        np.fill_diagonal(Bm, 0.0)
+        Bm[np.diag_indices(n)] = -Bm.sum(axis=1)
+        Xn = Vp @ (Bm @ X)
+        done = np.abs(Xn - X).max() < 1e-6
+        X = Xn
+        if done:
+            break
+    return X
+
+
+def _stress_rows(n, edges, width):
+    X = _stress(_hops(n, edges))
+    if np.ptp(X[:, 0]) < np.ptp(X[:, 1]):        # the long side across the screen
+        X = X[:, ::-1]
+    # rows chosen so the drawing comes out about 1.6 : 1, like the canvas
+    pitch = float(np.mean(width)) + GAP_BIG
+    rows = max(1, int(round(np.sqrt(n * pitch / (1.6 * ROW_BIG)))))
+    order = np.lexsort((X[:, 0], X[:, 1]))
+    cx, cy = np.zeros(n), np.zeros(n)
+    per = int(np.ceil(n / rows))
+    spans = []
+    for r in range(rows):
+        row = sorted(order[r * per:(r + 1) * per], key=lambda i: (X[i, 0], i))
+        if not row:
+            continue
+        cy[row] = r * ROW_BIG
+        spans.append((row, sum(width[i] for i in row) + GAP_BIG * (len(row) - 1)))
+    span = max(s for _, s in spans)
+    xr = np.ptp(X[:, 0]) or 1.0
+    for row, _ in spans:
+        want = (X[row, 0] - X[:, 0].min()) / xr * span
+        x = -np.inf
+        for i, t in zip(row, want):
+            left = max(t - width[i] / 2, x)
+            cx[i] = left + width[i] / 2
+            x = left + width[i] + GAP_BIG
+        shift = np.mean(want) - np.mean(cx[row])
+        cx[row] += shift
+    return cx - span / 2, cy
+
+
+def _straight(edges, cx, cy, L, R):
+    """Straight branch lines between the bars (large networks). A branch
+    leaves each bar at the point nearest the other bar."""
+    routes, seen = [], {}
+    for a, b in edges:
+        key = (min(a, b), max(a, b))
+        nth = seen.get(key, 0)
+        seen[key] = nth + 1
+        off = 0.3 * nth
+        if abs(cy[a] - cy[b]) < 0.5:
+            le, ri = (a, b) if cx[a] < cx[b] else (b, a)
+            routes.append([(R[le], cy[a] + off), (L[ri], cy[a] + off)])
+            continue
+        xa = min(max(cx[b], L[a] + 0.4), R[a] - 0.4) + off
+        xb = min(max(cx[a], L[b] + 0.4), R[b] - 0.4) + off
+        routes.append([(xa, cy[a]), (xb, cy[b])])
+    return routes
+
+
 def _xy_columns(bus, n):
     if bus is None or len(bus) != n:
         return None
@@ -362,10 +471,14 @@ def layout(n, edges, bus=None, coords=None):
         xy = np.asarray(coords, float)
     if xy is not None:
         cx, cy = xy[:, 0].copy(), xy[:, 1].copy()
+    elif n > BIG:
+        cx, cy = _stress_rows(n, edges, w)
     else:
         types = bus["Type"].to_numpy() if bus is not None else [""] * n
         cx, cy = _layered(n, edges, types, w)
     L, R = cx - w / 2, cx + w / 2
+    if n > BIG:
+        return dict(cx=cx, cy=cy, w=w, routes=_straight(edges, cx, cy, L, R))
 
     def free_h(y, x0, x1, skip):
         x0, x1 = min(x0, x1) - 0.2, max(x0, x1) + 0.2

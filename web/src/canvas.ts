@@ -46,7 +46,9 @@ const BAND = (v: number, lo: number, hi: number) =>
     : v < lo + 0.02 || v > hi - 0.02 ? "var(--amber)" : "var(--text)";
 
 /** Symbol size in px for one diagram unit: follows the zoom, within limits. */
-const symUnit = (k: number) => Math.max(20, Math.min(k, 60));
+// symbol size follows the zoom between 8 px (a big network seen whole: small
+// markers) and 60 px per diagram unit
+const symUnit = (k: number) => Math.max(8, Math.min(k, 60));
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? NaN : Number(v));
 const hasXY = (b: Rec) => Number.isFinite(num(b.x)) && Number.isFinite(num(b.y));
 const snap = (v: number) => Math.round(v * 2) / 2;
@@ -335,8 +337,9 @@ registerDoc("canvas", (el) => {
       const sx = xr - 0.45 * u;
       if (isGen(b)) {
         gBus.append("line").attr("class", "sym").attr("x1", sx).attr("x2", sx).attr("y1", yy).attr("y2", yy - 0.9 * u);
-        gBus.append("circle").attr("class", "sym").attr("cx", sx).attr("cy", yy - 1.2 * u).attr("r", 0.3 * u);
-        gText.append("text").attr("class", "sym-label").attr("x", sx).attr("y", yy - 1.2 * u)
+        gBus.append("circle").attr("class", u < 16 ? "sym dot" : "sym").attr("cx", sx).attr("cy", yy - 1.2 * u)
+          .attr("r", Math.max(0.3 * u, 3));
+        if (u >= 16) gText.append("text").attr("class", "sym-label").attr("x", sx).attr("y", yy - 1.2 * u)
           .attr("text-anchor", "middle").attr("dominant-baseline", "central").text("G");
         if (names) gText.append("text").attr("class", "angle-label").attr("x", sx + 0.3 * u + 4).attr("y", yy - 1.2 * u)
           .attr("dominant-baseline", "central").text(`G${i + 1}`);

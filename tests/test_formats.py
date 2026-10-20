@@ -143,3 +143,36 @@ def test_import_endpoint():
     assert s.status_code == 200 and s.json()["ok"]
     bad = c.post("/api/import", json={"filename": "x.m", "text": "nothing here"})
     assert bad.status_code == 422 and "Import failed" in bad.json()["problems"][0]
+
+
+# ------------------------------------------------------------ layout of big cases
+import figures
+
+
+def _layout(case):
+    l = case["lines"]
+    edges = [(int(a) - 1, int(b) - 1) for a, b in zip(l["From"], l["To"])]
+    return figures.layout(len(case["bus"]), edges, case["bus"]), edges
+
+
+@pytest.mark.parametrize("name", ["case30", "case118"])
+def test_big_layout_is_tidy_and_deterministic(name):
+    g, edges = _layout(_mp(name))
+    g2, _ = _layout(_mp(name))
+    assert np.array_equal(g["cx"], g2["cx"]) and np.array_equal(g["cy"], g2["cy"])
+    cx, cy, w = np.asarray(g["cx"]), np.asarray(g["cy"]), np.asarray(g["w"])
+    for r in np.unique(cy):                       # bars in a row never overlap
+        row = np.flatnonzero(cy == r)
+        order = row[np.argsort(cx[row])]
+        gaps = (cx[order][1:] - w[order][1:] / 2) - (cx[order][:-1] + w[order][:-1] / 2)
+        assert (gaps > 1.0).all()
+    aspect = np.ptp(cx) / np.ptp(cy)
+    assert 1.0 < aspect < 3.0
+    assert len(g["routes"]) == len(edges) and all(len(r) == 2 for r in g["routes"])
+
+
+def test_small_networks_keep_the_layered_drawing():
+    bus, lines = gridcore.CASES["5-bus (demo)"]
+    edges = [(int(a) - 1, int(b) - 1) for a, b in zip(lines["From"], lines["To"])]
+    g = figures.layout(5, edges, bus)
+    assert sorted(set(np.round(g["cy"], 6))) == [0.0, 5.0, 10.0]   # rows by distance from the slack

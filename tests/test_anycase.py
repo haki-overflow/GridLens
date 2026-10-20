@@ -270,3 +270,38 @@ def test_line_between_voltage_levels_is_flagged():
     bus, lines = SAADAT_67_ACTUAL
     notes = _prep(bus.assign(kV=[230.0, 230.0, 132.0]), lines, units="actual")[3]
     assert any("not marked as a transformer" in n for n in notes)
+
+
+# ------------------------------------------------- acceptance: tap and Q limits
+def _v2(v1, p, q, x):
+    """Receiving voltage of a lossless line: V2^4 + (2QX - V1^2) V2^2 + X^2 (P^2 + Q^2) = 0."""
+    b = 2 * q * x - v1 ** 2
+    return np.sqrt((-b + np.sqrt(b * b - 4 * x * x * (p * p + q * q))) / 2)
+
+
+@pytest.mark.parametrize("tap", [0.95, 1.0, 1.05])
+def test_tap_transformer_matches_closed_form(tap):
+    # ideal a:1 transformer at the From side, then X: bus 1 sees V1 / a behind X
+    bus, lines = _two_bus(Tap=tap, Kind="trafo")
+    b, l, probs, _ = _prep(bus, lines)
+    assert probs == []
+    res, *_ = solve_loadflow(b, l)
+    assert res["V (pu)"].iloc[1] == pytest.approx(_v2(1.0 / tap, 0.6, 0.2, 0.2), abs=1e-9)
+    no_load, *_ = solve_loadflow(b.assign(Pd=0.0, Qd=0.0), l)
+    assert no_load["V (pu)"].iloc[1] == pytest.approx(1.0 / tap, abs=1e-9)
+
+
+def test_q_limited_generator_holds_qmax_and_lets_v_drop():
+    # bus 2: generator set to 1.05 pu, Qmax 0.2 pu, load 0.6 + j0.5: it cannot hold 1.05
+    bus = pd.DataFrame({"Type": ["Slack", "PV"], "V": [1.0, 1.05], "Pg": [0.0, 0.0], "Qg": [0.0, 0.0],
+                        "Pd": [0.0, 0.6], "Qd": [0.0, 0.5], "Bs": [0.0, 0.0], "Qmin": [None, -0.5],
+                        "Qmax": [None, 0.2]})
+    lines = pd.DataFrame([dict(From=1, To=2, R=0.0, X=0.2, B=0.0, Tap=1.0)])
+    b, l, probs, _ = _prep(bus, lines, qlim=True)
+    out = gridcore.run_study(b, l, "Newton-Raphson", 1e-10, 100.0, 0.95, 1.1, qlim=True)
+    assert out["ok"] and out["qlog"] and out["qlog"][0]["Action"] == "PV → PQ"
+    v2 = out["res"]["V (pu)"].iloc[1]
+    assert v2 < 1.05
+    qg = out["res"]["Q_inj"].iloc[1] + 0.5
+    assert qg == pytest.approx(0.2, abs=1e-9)
+    assert v2 == pytest.approx(_v2(1.0, 0.6, 0.5 - 0.2, 0.2), abs=1e-9)

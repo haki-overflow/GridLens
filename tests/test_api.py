@@ -229,3 +229,32 @@ def test_report_returns_the_models_text(monkeypatch):
     import gridcore as ai_report
     monkeypatch.setattr(ai_report, "ai_report", lambda s, m: f"{m}:{s}")
     assert client.post("/api/report", json={"summary": "S", "model": "M"}).json() == {"text": "M:S"}
+
+
+# ---- a case drawn in the workspace from the tool defaults (web/src/app.ts) ----
+NEW_BUS = dict(Type="PQ", V=1, Pg=0, Qg=0, Pd=0, Qd=0, Bs=0)
+DRAWN = {
+    "name": "New network",
+    "bus": [dict(NEW_BUS, Type="Slack", x=0.001, y=0.001),     # Start drawing
+            dict(NEW_BUS, Pd=0.5, Qd=0.2, x=0.001, y=5.001)],  # Bus tool + Load tool
+    "lines": [dict(From=1, To=2, R=0.01, X=0.1, B=0, Tap=1)],  # Line tool
+    "settings": {},                                            # defaults
+}
+
+
+def test_case_from_drawing_defaults_solves():
+    out = post("/api/study", DRAWN)
+    assert out["ok"] and out["its"] > 0
+    assert out["res"][1]["P_inj"] == pytest.approx(-0.5, abs=1e-6)
+    assert out["res"][1]["Q_inj"] == pytest.approx(-0.2, abs=1e-6)
+    assert 0.9 < out["res"][1]["V (pu)"] < 1.0
+    assert post("/api/layout", DRAWN)["cx"] == [0.001, 0.001]
+
+
+def test_transformer_kind_column_is_passed_through():
+    # the Transformer tool adds Kind="trafo"; prep_case keeps it and the
+    # solver ignores it, so the results equal the same branch without it
+    trafo = dict(DRAWN, lines=[dict(From=1, To=2, R=0, X=0.1, B=0, Tap=1, Kind="trafo")])
+    plain = dict(DRAWN, lines=[dict(From=1, To=2, R=0, X=0.1, B=0, Tap=1)])
+    a, b = post("/api/study", trafo), post("/api/study", plain)
+    assert a["res"] == b["res"] and a["flows"] == b["flows"]

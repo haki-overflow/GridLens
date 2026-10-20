@@ -132,6 +132,7 @@ registerDoc("canvas", (el) => {
   let tool: Tool = "select";
   let drag: Drag | null = null;
   let rubber: { from: number; x0: number; y0: number; x: number; y: number } | null = null;
+  let lastClick = { key: "", t: 0 }; // for double-click detection (see the click handler)
   let layout: Layout | null = null;
   let layoutFor: string | null = null; // the case signature the layout belongs to
   let asked: string | null = null;
@@ -208,6 +209,7 @@ registerDoc("canvas", (el) => {
   function setTool(id: Tool): void {
     tool = id;
     rubber = null;
+    lastClick = { key: "", t: 0 };
     wrap.dataset.tool = id;
     for (const [k, b] of toolBtns) {
       b.classList.toggle("on", k === id);
@@ -459,14 +461,16 @@ registerDoc("canvas", (el) => {
     } else if (tool !== "line" && tool !== "trafo") {
       selectHit(hit);
     }
-  });
-
-  svg.on("dblclick", (e: MouseEvent) => {
-    const hit = hitOf(e.target);
-    if (!hit || tool === "delete") return;
-    selectHit(hit);
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(
-      ".ws-props .pgroup input:not([readonly]), .ws-props .pgroup select")?.focus());
+    // Double-click, detected here: the first click redraws the diagram, so the
+    // browser's dblclick (and click count) can be lost with the replaced
+    // element. Two clicks on the same bus or line within 500 ms count.
+    const key = hit ? `${hit.kind === "branch" ? "branch" : "bus"}:${hit.i}` : "";
+    const double = !!key && key === lastClick.key && e.timeStamp - lastClick.t < 500;
+    lastClick = double ? { key: "", t: 0 } : { key, t: e.timeStamp };
+    if (double && hit && tool !== "delete") {
+      selectHit(hit); // the Properties panel repaints synchronously
+      document.querySelector<HTMLElement>(".ws-props .pgroup input:not([readonly]), .ws-props .pgroup select")?.focus();
+    }
   });
 
   // Line / Transformer: press on bus A, drag a rubber band, release on bus B.
@@ -532,25 +536,35 @@ registerDoc("canvas", (el) => {
     }).catch((e) => report(e, "The outage case"));
   };
 
-  /** Ask the server for the layout. A refused (unfinished) drawing keeps the
-   *  canvas: it is drawn from the buses' x, y and a warning chip says why. */
+  const showWarn = (problems: string[]) => {
+    warn.textContent = `Diagram: ${problems[0] ?? "the network is not finished"}`
+      + (problems.length > 1 ? ` (+${problems.length - 1} more)` : "");
+    warn.title = [...problems, "Press Run (F5) for the full list."].join("\n");
+    warn.hidden = false;
+  };
+
+  /** Ask the server for the layout. An unfinished drawing is checked with
+   *  /api/validate first (always 200, so the browser logs no failed
+   *  request); it keeps the canvas, drawn from the buses' x, y, and a
+   *  warning chip says what is missing. */
   const refresh = async (c: CaseData) => {
     const my = ++token;
     const sig = sigOf(c);
     try {
-      const L = await post<Layout>("/api/layout", c);
+      const v = await post<{ problems: string[] }>("/api/validate", c);
       if (my !== token) return;
-      layout = L;
-      layoutFor = sig;
-      warn.hidden = true;
+      if (v.problems.length) showWarn(v.problems);
+      else {
+        const L = await post<Layout>("/api/layout", c);
+        if (my !== token) return;
+        layout = L;
+        layoutFor = sig;
+        warn.hidden = true;
+      }
     } catch (e) {
       if (my !== token) return;
-      if (e instanceof ApiError && e.status === 422) {
-        warn.textContent = `Diagram: ${e.problems[0] ?? "the network is not finished"}`
-          + (e.problems.length > 1 ? ` (+${e.problems.length - 1} more)` : "");
-        warn.title = [...e.problems, "Press Run (F5) for the full list."].join("\n");
-        warn.hidden = false;
-      } else report(e, "The diagram layout");
+      if (e instanceof ApiError && e.status === 422) showWarn(e.problems);
+      else report(e, "The diagram layout");
     }
     fitIfNeeded();
     schedule();

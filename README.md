@@ -227,3 +227,20 @@ The workspace now opens on a Start screen (example, textbook data, or file) and 
 3. **Work down the list on the left.** Solve (results, profile plots), Safety check (N-1, PV curve; click an N-1 row to see that outage), Short circuit (3-phase and SLG/LL/DLG with editable sequence data), Show working, Tools.
 
    ![Safety check](docs/3-safety.png)
+
+### Drawing a network
+Choose **Draw a new network** on the Start screen (one Slack bus, Bus tool on), or edit any case on Network > Diagram. The tools sit on the diagram; the active one is highlighted and a hint at the bottom says what it does.
+
+| Tool | Key | Use |
+|---|---|---|
+| Select | V | Click to select, drag a bar to move it, drag empty space to pan, wheel to zoom. Double-click to edit in Properties. |
+| Bus | B | Click empty canvas: a PQ bus (V = 1, everything else 0) on a 0.5-unit grid. |
+| Line | L | Press on one bus, drag, release on another: R 0.01, X 0.1, B 0, Tap 1. |
+| Transformer | T | Same gesture: R 0, X 0.1, Tap 1, drawn with two circles. |
+| Generator | G | Click a bus: Slack if the case has none, otherwise PV (Pg 0.5, V 1.0). |
+| Load | D | Click a bus: Pd 0.5, Qd 0.2. |
+| Delete | Del | Click a bus, line, generator or load to remove it. |
+
+Esc returns to Select. Delete / Backspace removes the selection. Ctrl+Z undoes (up to 50 steps), Ctrl+Shift+Z or Ctrl+Y redoes; Undo and Redo are also in the toolbar. Ctrl+0 fits the diagram. An unfinished drawing stays on screen with a warning chip that says what is missing. Press Run (F5) to solve.
+
+**Data tables** (Network > Data tables) holds the same case as fill-in tables, like the Streamlit version: edit any cell, add or delete rows, or paste a block copied from Excel or a textbook PDF into a cell to fill the rows from there. Bad cells turn red with the validation message. Data in MVA, kV and ohms goes through File > Enter textbook data....

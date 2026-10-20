@@ -99,6 +99,13 @@ function selectInput(options: string[], value: string, commit: (v: string) => vo
   return s;
 }
 
+function labelledSelect(options: [string, string][], value: string, commit: (v: string) => void): HTMLSelectElement {
+  const s = h("select");
+  for (const [v, t] of options) s.append(new Option(t, v, false, v === value));
+  s.addEventListener("change", () => commit(s.value));
+  return s;
+}
+
 function checkInput(value: boolean, commit: (v: boolean) => void): HTMLInputElement {
   const i = h("input");
   i.type = "checkbox";
@@ -144,12 +151,18 @@ function projectPanel(c: CaseData): HTMLElement {
     row("Tolerance", numInput(st.tol, (v) => editSettings(cur(c), { tol: v }), 12), "pu"),
     row("Base", numInput(st.base, (v) => editSettings(cur(c), { base: v }), 2), "MVA"),
     row("V min", numInput(st.vmin, (v) => editSettings(cur(c), { vmin: v }), 3), "pu"),
-    row("V max", numInput(st.vmax, (v) => editSettings(cur(c), { vmax: v }), 3), "pu"));
+    row("V max", numInput(st.vmax, (v) => editSettings(cur(c), { vmax: v }), 3), "pu"),
+    row("Data units", labelledSelect([["pu", "Per unit"], ["actual", "MW, kV, Ω"]], st.units ?? "pu",
+      (v) => editSettings(cur(c), { units: v as Settings["units"] }))),
+    row("Frequency", numInput(st.freq ?? 50, (v) => editSettings(cur(c), { freq: v }), 0), "Hz"));
   const [g3, b3] = group("Advanced", false);
   b3.append(
     row("Generator Q limits", checkInput(st.qlim, (v) => editSettings(cur(c), { qlim: v }))),
     row("Transformer taps", checkInput(st.taps, (v) => editSettings(cur(c), { taps: v }))),
-    row("Bus shunts", checkInput(st.shunts, (v) => editSettings(cur(c), { shunts: v }))));
+    row("Bus shunts", checkInput(st.shunts, (v) => editSettings(cur(c), { shunts: v }))),
+    row("Initial guess", labelledSelect([["flat", "Flat (1∠0°)"], ["setpoint", "Set-points"]],
+      st.init ?? "flat", (v) => editSettings(cur(c), { init: v }))),
+    row("Auto fallback", checkInput(st.fallback ?? true, (v) => editSettings(cur(c), { fallback: v }))));
   const acts = h("div", "pacts");
   acts.append(actionBtn("+ Add bus", () => addBus(cur(c))), actionBtn("+ Add line", () => addLine(cur(c))));
   box.append(g1, g2, g3, acts, h("div", "empty", "Pick a bus or line above, or click it on the diagram, to edit it."));

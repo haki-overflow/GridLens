@@ -560,6 +560,9 @@ export interface RowEditorOpts {
   onAdd?: () => void; // instead of copying the last row
   onDelete?: (row: number) => void; // instead of splicing the row out
   onPaste?: (row: number, col: number, block: string[][]) => void; // col -1 = the "#" cell
+  readonly?: string[]; // columns shown but not editable
+  labels?: Record<string, string>; // header text per column (default: the column name)
+  addLabel?: string; // text of the add button
 }
 
 const show = (v: unknown) => v === null || v === undefined ? ""
@@ -599,7 +602,7 @@ function rowEditor(rows: Rec[], cols: string[], onChange: () => void, o: RowEdit
   const draw = () => {
     const tb = h("table", "grid");
     const head = h("tr");
-    head.append(...(o.index ? [h("th", "", "#")] : []), ...cols.map((c) => h("th", "", c)),
+    head.append(...(o.index ? [h("th", "", "#")] : []), ...cols.map((c) => h("th", "", o.labels?.[c] ?? c)),
       ...(o.addable ? [h("th", "", "")] : []));
     tb.replaceChildren(head);
     rows.forEach((r, i) => {
@@ -629,7 +632,8 @@ function rowEditor(rows: Rec[], cols: string[], onChange: () => void, o: RowEdit
         } else {
           const t = h("input");
           t.defaultValue = show(cur);
-          t.style.width = isNum(c, cur) ? "70px" : "92px";
+          t.style.width = isNum(c, cur) ? "64px" : "92px";
+          if (o.readonly?.includes(c)) t.readOnly = true;
           t.addEventListener("change", () => {
             const raw = t.value.trim();
             t.defaultValue = t.value; // committed: Ctrl+Z now undoes the case
@@ -668,7 +672,7 @@ function rowEditor(rows: Rec[], cols: string[], onChange: () => void, o: RowEdit
     });
     wrap.replaceChildren(tb);
     if (o.addable) {
-      const add = h("button", "btn", "+ Add row");
+      const add = h("button", "btn", o.addLabel ?? "+ Add row");
       add.type = "button";
       add.addEventListener("click", () => {
         if (o.onAdd) return o.onAdd();
@@ -692,9 +696,26 @@ function rowEditor(rows: Rec[], cols: string[], onChange: () => void, o: RowEdit
 
 const BUS_TYPES = ["Slack", "PV", "PQ"];
 const LINE_KINDS = ["line", "trafo"];
-const LINE_COLS = ["From", "To", "R", "X", "B", "Tap", "Kind"];
-const busCols = (c: CaseData) => ["Type", "V", "Pg", "Qg", "Pd", "Qd", "Bs", "kV",
-  ...(c.settings.qlim ? ["Qmin", "Qmax"] : [])];
+const IN_SERVICE = ["yes", "no"];
+const LINE_COLS = ["From", "To", "R", "X", "B", "Tap", "Shift", "Rate", "InService", "Kind"];
+const busCols = (c: CaseData) => ["Num", "Name", "Type", "kV", "V", "Pd", "Qd", "Pg", "Qg",
+  ...(c.settings.qlim ? ["Qmin", "Qmax"] : []), "Gs", "Bs"];
+const GEN_COLS = ["Bus", "Type", "V", "Pg", "Qg", "Qmin", "Qmax"];
+const LOAD_COLS = ["Bus", "Pd", "Qd"];
+const SHUNT_COLS = ["Bus", "Gs", "Bs"];
+
+/** Column headers with the units of the case (per unit or actual). */
+function unitLabels(c: CaseData): Record<string, string> {
+  const act = c.settings.units === "actual";
+  const p = act ? "MW" : "pu", q = act ? "MVAr" : "pu";
+  return {
+    Num: "No.", kV: "Base kV", V: "V set (pu)", Pd: `Pd (${p})`, Qd: `Qd (${q})`, Pg: `Pg (${p})`,
+    Qg: `Qg (${q})`, Qmin: `Qmin (${q})`, Qmax: `Qmax (${q})`, Gs: `Gs (${act ? "MW" : "pu"})`,
+    Bs: `Bs (${act ? "MVAr" : "pu"})`, R: `R (${act ? "Ω" : "pu"})`, X: `X (${act ? "Ω" : "pu"})`,
+    B: `B (${act ? "µS" : "pu"})`, Tap: "Tap", Shift: "Shift (°)", Rate: "Rate (MVA)",
+    InService: "In service", Kind: "Kind",
+  };
+}
 
 const normType = (s: string) => /^(sl|sw|ref|3$)/i.test(s) ? "Slack" : /^(pv|gen|2$)/i.test(s) ? "PV"
   : /^(pq|load|[01]$)/i.test(s) ? "PQ" : s;
@@ -705,6 +726,7 @@ const normKind = (s: string) => (/^(t|x)/i.test(s) ? "trafo" : /^l/i.test(s) || 
 function pasteValue(col: string, raw: string): unknown {
   if (col === "Type") return normType(raw);
   if (col === "Kind") return normKind(raw);
+  if (col === "Name") return raw;
   const t = raw.replace(/[−–]/g, "-");
   if (t === "") return null;
   return Number.isFinite(Number(t)) ? Number(t) : raw;
@@ -724,26 +746,33 @@ function cellMarks(problems: string[], c: CaseData): Map<string, string> {
     else if ((g = /^Bus Type must be .*\(row\(s\) ([\d, ]+)\)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "Type", p));
     else if ((g = /^Line (From|To) must be whole .*\(rows ([\d, ]+)\)/.exec(p))) rows(g[2]!).forEach((r) => put("line", r, g![1]!, p));
     else if ((g = /^More than one Slack bus \(buses ([\d, ]+)\)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "Type", p));
-    else if (p.startsWith("Lines reference buses that do not exist")) {
+    else if ((g = /more than one Slack bus \(([\d, ]+)\)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "Type", p));
+    else if ((g = /^Base kV must be greater than 0 \(bus rows ([\d, ]+)\)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "kV", p));
+    else if ((g = /missing or not positive at bus rows ([\d, ]+)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "kV", p));
+    else if ((g = /^Duplicate bus numbers: ([\d, ]+)/.exec(p))) {
+      const dup = new Set(g[1]!.split(",").map((x) => Number(x)));
+      c.bus.forEach((b, r) => { if (dup.has(Number(b.Num))) put("bus", r, "Num", p); });
+    } else if (p.startsWith("Lines reference buses that do not exist")) {
       for (const x of p.matchAll(/row (\d+): (From|To) =/g)) put("line", Number(x[1]) - 1, x[2]!, p);
     } else if (p.startsWith("Series reactance X must be greater than 0")) {
       c.lines.forEach((l, r) => { if (Number.isFinite(Number(l.X)) && Number(l.X) <= 0) put("line", r, "X", p); });
-    } else if ((g = /cannot reach buses ([\d, ]+)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "#", p));
+    } else if ((g = /buses ([\d, ]+) have no path to a Slack/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "#", p));
   }
   return m;
 }
 
 registerDoc("case-tables", (el) => {
-  title(el, "Data tables", "Bus and line data in per unit. Edit any cell, add or delete rows, or paste a block "
-    + "copied from Excel or a textbook PDF into a cell to fill the rows from there. The diagram follows at once.");
+  const head = h("div");
   const probs = h("div", "tbl-probs");
-  const busBox = h("div"), lineBox = h("div");
+  const [busBox, lineBox, genBox, loadBox, shuntBox] = subtabs(el, ["Buses", "Branches", "Generators",
+    "Loads", "Shunts"], "tables") as [HTMLElement, HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+  el.prepend(head, probs);
   const foot = h("p", "cap");
   const wiz = h("button", "btn", "Enter textbook data...");
   wiz.type = "button";
   wiz.addEventListener("click", () => void openWizard());
-  foot.append("Data in MVA, kV and ohms? ", wiz);
-  el.append(probs, section("Buses"), busBox, section("Lines and transformers"), lineBox, foot);
+  foot.append("A whole question in MVA, kV and ohms with transformers between voltage levels? ", wiz);
+  el.append(foot);
 
   let shown: CaseData | null = null;
   let writing = false; // a cell edit from this table: keep the DOM (and the focus)
@@ -792,27 +821,73 @@ registerDoc("case-tables", (el) => {
       });
     });
     setState({ case: t === "bus" ? { ...c, bus: rows } : { ...c, lines: rows }, outage: null });
-    log("info", `Pasted ${grid.length} row(s) into the ${t === "bus" ? "bus" : "line"} table from row ${i + 1}.`);
+    log("info", `Pasted ${grid.length} row(s) into the ${t === "bus" ? "bus" : "branch"} table from row ${i + 1}.`);
+  };
+
+  /** A view over some bus rows (generators, loads, shunts): one table row per
+   *  bus that has one; edits go to that bus; "add" puts one on a chosen bus. */
+  const busView = (box: HTMLElement, c: CaseData, kind: string, cols: string[], has: (b: Rec) => boolean,
+    blank: Rec, clear: (b: Rec) => Rec, labels: Record<string, string>) => {
+    const at = c.bus.map((b, i) => [b, i] as const).filter(([b]) => has(b)).map(([, i]) => i);
+    const rows = at.map((i) => ({ ...c.bus[i]!, Bus: i + 1 }));
+    const ed = rowEditor(rows, cols, () => {}, {
+      addable: true, name: kind, readonly: ["Bus"], labels, select: kind === "gen" ? { Type: ["Slack", "PV", "PQ"] } : {},
+      numeric: cols.filter((x) => x !== "Type"),
+      cell: (r, col, v) => act(() => editBus(cur(), at[r]!, { [col]: v }), true),
+      onDelete: (r) => act(() => editBus(cur(), at[r]!, clear(cur().bus[at[r]!]!))),
+      onAdd: () => pick.focus(),
+    });
+    for (const inp of ed.querySelectorAll<HTMLElement>("[data-r]")) inp.dataset.r = String(at[Number(inp.dataset.r)]);
+    const pick = h("select", "tb-select");
+    const free = c.bus.map((b, i) => [b, i] as const).filter(([b]) => !has(b));
+    pick.append(new Option(`Add a ${kind === "gen" ? "generator" : kind} at bus...`, ""),
+      ...free.map(([b, i]) => new Option(`Bus ${i + 1}${b.Name ? ` (${String(b.Name)})` : ""}`, String(i))));
+    pick.addEventListener("change", () => {
+      const i = Number(pick.value);
+      if (pick.value !== "") act(() => editBus(cur(), i, { ...blank, ...(kind === "gen" && !cur().bus.some((b) => b.Type === "Slack") ? { Type: "Slack" } : {}) }));
+    });
+    ed.querySelector(":scope > .btn")?.remove();   // "+ Add row": the bus picker below adds one
+    const row = h("div", "tbl-add");
+    row.append(pick);
+    box.replaceChildren(rows.length ? ed : h("p", "cap", `No ${kind === "gen" ? "generators" : kind + "s"} yet.`), row);
   };
 
   const build = (c: CaseData) => {
     const f = document.activeElement as HTMLElement | null;
     const at = f && el.contains(f) ? [f.dataset.t, f.dataset.r, f.dataset.c] : null;
+    const L = unitLabels(c);
+    const act_ = c.settings.units === "actual";
+    head.replaceChildren(h("h2", "", "Data tables"), h("p", "cap", act_
+      ? `Actual units: MW, MVAr, kV, Ω and µS on a ${c.settings.base} MVA system; every bus needs its base kV `
+        + "(branch ohms are taken on the From bus base). Change in Properties > Study settings > Data units."
+      : `Per unit on ${c.settings.base} MVA. Edit any cell, add or delete rows, or paste a block copied from `
+        + "Excel or a textbook PDF into a cell to fill the rows from there. The diagram follows at once."));
     const bcols = busCols(c);
     busBox.replaceChildren(rowEditor(c.bus, bcols, () => {}, {
-      index: true, addable: true, name: "bus", select: { Type: BUS_TYPES }, numeric: bcols.slice(1),
+      index: true, addable: true, name: "bus", select: { Type: BUS_TYPES }, labels: L,
+      numeric: bcols.filter((x) => x !== "Type" && x !== "Name"),
       cell: (i, col, v) => act(() => editBus(cur(), i, { [col]: v }), true),
       onAdd: () => act(() => addBus(cur())),
       onDelete: (i) => act(() => delBus(cur(), i)),
       onPaste: (i, ci, b) => act(() => pasteRows("bus", i, ci, b)),
     }));
-    lineBox.replaceChildren(rowEditor(c.lines, LINE_COLS, () => {}, {
-      index: true, addable: true, name: "line", select: { Kind: LINE_KINDS }, numeric: LINE_COLS.slice(0, 6),
-      cell: (i, col, v) => act(() => editLine(cur(), i, { [col]: v }), true),
+    const lines = c.lines.map((l) => ({ ...l, InService: l.InService === undefined || l.InService === null
+      || Number(l.InService) !== 0 ? "yes" : "no" }));
+    lineBox.replaceChildren(rowEditor(lines, LINE_COLS, () => {}, {
+      index: true, addable: true, name: "line", labels: L, select: { Kind: LINE_KINDS, InService: IN_SERVICE },
+      numeric: LINE_COLS.slice(0, 8),
+      cell: (i, col, v) => act(() => editLine(cur(), i, { [col]: col === "InService" ? (v === "no" ? 0 : 1) : v }), true),
       onAdd: () => act(() => addLine(cur())),
       onDelete: (i) => act(() => delLine(cur(), i)),
       onPaste: (i, ci, b) => act(() => pasteRows("line", i, ci, b)),
     }));
+    const n = (v: unknown) => Number(v) || 0;
+    busView(genBox, c, "gen", GEN_COLS, (b) => b.Type !== "PQ" || n(b.Pg) !== 0 || n(b.Qg) !== 0,
+      { Type: "PV", Pg: 0, V: 1 }, (b) => ({ Type: b.Type === "Slack" ? "Slack" : "PQ", Pg: 0, Qg: 0 }), L);
+    busView(loadBox, c, "load", LOAD_COLS, (b) => n(b.Pd) !== 0 || n(b.Qd) !== 0,
+      { Pd: 0, Qd: 0 }, () => ({ Pd: 0, Qd: 0 }), L);
+    busView(shuntBox, c, "shunt", SHUNT_COLS, (b) => n(b.Gs) !== 0 || n(b.Bs) !== 0,
+      { Bs: 0, Gs: 0 }, () => ({ Gs: 0, Bs: 0 }), L);
     applyMarks();
     if (at) el.querySelector<HTMLElement>(`[data-t="${at[0]}"][data-r="${at[1]}"][data-c="${at[2]}"]`)?.focus();
   };
@@ -841,13 +916,14 @@ registerDoc("case-tables", (el) => {
       const prev = shown;
       shown = s.case;
       if (!s.case) {
-        busBox.replaceChildren();
-        lineBox.replaceChildren();
+        for (const b of [busBox, lineBox, genBox, loadBox, shuntBox]) b.replaceChildren();
         notice(probs, "No case loaded.");
         return;
       }
       const sameShape = !!prev && prev.bus.length === s.case.bus.length && prev.lines.length === s.case.lines.length
-        && prev.settings.qlim === s.case.settings.qlim;
+        && prev.settings.qlim === s.case.settings.qlim && prev.settings.units === s.case.settings.units
+        && prev.bus.every((b, i) => ["Type", "Pd", "Qd", "Pg", "Qg", "Gs", "Bs"].every((k) =>
+          (Number(b[k]) === 0) === (Number(s.case!.bus[i]?.[k]) === 0) && (k !== "Type" || b[k] === s.case!.bus[i]?.[k])));
       if (!(writing && sameShape)) build(s.case);
     }
     if (s.case && s.activeDoc === "case-tables" && checked !== s.case) validate(s.case);

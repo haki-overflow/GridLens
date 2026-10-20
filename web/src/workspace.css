@@ -496,3 +496,8 @@ dialog.newcase { width: min(520px, 94vw); padding: 16px 18px; }
 .minichart .axis text { fill: var(--muted); font-size: 10px; }
 
 .sym.dot { fill: var(--text); }   /* a generator seen from far away */
+
+.part-chip { position: absolute; right: 8px; bottom: 40px; z-index: 2; padding: 3px 10px; font: inherit; font-size: 11.5px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--axis); cursor: pointer; white-space: nowrap; }
+.part-chip:hover { border-color: var(--muted); }
+.part-chip[hidden] { display: none; }

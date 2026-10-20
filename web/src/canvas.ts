@@ -49,6 +49,8 @@ const BAND = (v: number, lo: number, hi: number) =>
 // symbol size follows the zoom between 8 px (a big network seen whole: small
 // markers) and 60 px per diagram unit
 const symUnit = (k: number) => Math.max(8, Math.min(k, 60));
+const READ_K = 22;   // px per diagram unit at which every label and symbol is drawn
+const NAMES_K = 14;  // below this a fitted view would drop the names: open at READ_K instead
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? NaN : Number(v));
 const hasXY = (b: Rec) => Number.isFinite(num(b.x)) && Number.isFinite(num(b.y));
 const snap = (v: number) => Math.round(v * 2) / 2;
@@ -203,10 +205,15 @@ registerDoc("canvas", (el) => {
   chip.addEventListener("click", () => setState({ outage: null }));
   const warn = h("div", "canvas-warn");
   warn.hidden = true;
+  const part = h("button", "part-chip");   // a big network shown in part, at reading size
+  part.type = "button";
+  part.hidden = true;
+  part.title = "Fit the whole network in the window (Ctrl+0)";
+  part.addEventListener("click", (e) => { e.stopPropagation(); fit(); });
   chips.append(chip, warn);
   const hint = h("div", "canvas-hint");
   hint.setAttribute("aria-live", "polite");
-  wrap.append(tools, chips, hint);
+  wrap.append(tools, chips, hint, part);
 
   function setTool(id: Tool): void {
     tool = id;
@@ -223,7 +230,10 @@ registerDoc("canvas", (el) => {
   setTool("select");
   window.addEventListener("gl:tool", (e) => setTool((e as CustomEvent<Tool>).detail));
 
-  const fit = (animate = true): boolean => {
+  /** Fit the whole drawing in the window. With `readable`, a network too big
+   *  to read when fitted opens at reading size (READ_K) around its Slack bus
+   *  instead; the user zooms out (wheel) or presses Fit to see all of it. */
+  const fit = (animate = true, readable = false): boolean => {
     const c = getState().case;
     const box = wrap.getBoundingClientRect();
     if (!c || !c.bus.length || box.width < 10 || box.height < 10) return false;
@@ -234,8 +244,17 @@ registerDoc("canvas", (el) => {
     const top = 44, bottom = 34;   // the tool bar and the hint line sit over the diagram
     const hgt = Math.max(box.height - top - bottom, 40);
     const k = Math.min(box.width / (x1 - x0), hgt / (y1 - y0), 40);
-    const z = d3.zoomIdentity.translate(box.width / 2, top + hgt / 2).scale(k)
+    let z = d3.zoomIdentity.translate(box.width / 2, top + hgt / 2).scale(k)
       .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+    if (readable && k < NAMES_K) {
+      // around the Slack bus, the window kept inside the drawing (no empty margin)
+      const i = Math.max(c.bus.findIndex((b) => b.Type === "Slack"), 0);
+      const hw = box.width / 2 / READ_K, hh = hgt / 2 / READ_K;
+      const mid = (v: number, lo: number, hi: number, half: number) =>
+        hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(Math.max(v, lo + half), hi - half);
+      z = d3.zoomIdentity.translate(box.width / 2, top + hgt / 2).scale(READ_K)
+        .translate(-mid(g.cx[i]!, x0, x1, hw), -mid(g.cy[i]!, y0, y1, hh));
+    }
     (animate ? svg.transition().duration(120) : svg).call(zoom.transform as never, z);
     return true;
   };
@@ -243,7 +262,7 @@ registerDoc("canvas", (el) => {
     // only once real positions exist (the server layout, or x, y on every bus)
     const c = getState().case;
     if (!c || (!matched(c) && !ownXY(c))) return;
-    if (needFit && fit(false)) needFit = false;
+    if (needFit && fit(false, true)) needFit = false;
   };
   window.addEventListener("gl:fit", () => fit());
   new ResizeObserver(fitIfNeeded).observe(wrap);
@@ -280,6 +299,10 @@ registerDoc("canvas", (el) => {
     const G = geo(c);
     const X = (x: number) => t.applyX(x), Y = (y: number) => t.applyY(y);
     const u = symUnit(t.k);
+    const vw = wrap.clientWidth, vh = wrap.clientHeight;
+    const shown = G.cx.filter((x, i) => X(x) > 0 && X(x) < vw && Y(G.cy[i]!) > 30 && Y(G.cy[i]!) < vh - 20).length;
+    part.hidden = shown === c.bus.length || c.bus.length <= 24;
+    part.textContent = `Showing ${shown} of ${c.bus.length} buses · wheel to zoom out · click to see all`;
     const fresh = s.results && caseSig(c) === s.solvedSig ? s.results : null;
     const sel = s.selection;
     const od = fresh && s.outage !== null && outageData && outageData.k === s.outage
@@ -319,7 +342,7 @@ registerDoc("canvas", (el) => {
 
     // zoomed out on a big network, only bus numbers are written; names,
     // voltages, angles and flows come back as you zoom in
-    const names = t.k >= 14, values = t.k >= 9;
+    const names = t.k >= NAMES_K, values = t.k >= 9;
     c.bus.forEach((b, i) => {
       const x = G.cx[i]!, y = G.cy[i]!, w = G.w[i]!;
       const xl = X(x - w / 2), xr = X(x + w / 2), yy = Y(y);

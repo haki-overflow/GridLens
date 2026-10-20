@@ -224,7 +224,14 @@ export function subscribe(fn: Listener): () => void {
   return () => listeners.delete(fn);
 }
 
-export function setState(patch: Partial<State>): void {
+/** Change the state. A new case is pushed onto the undo history unless
+ *  history is false (undo / redo themselves, or the very first case). */
+export function setState(patch: Partial<State>, history = true): void {
+  if (history && "case" in patch && patch.case !== state.case && state.case) {
+    undoStack.push(state.case);
+    if (undoStack.length > HISTORY) undoStack.shift();
+    redoStack.length = 0;
+  }
   state = { ...state, ...patch };
   for (const fn of listeners) fn(state);
   clearTimeout(saveTimer);
@@ -235,6 +242,34 @@ export function setState(patch: Partial<State>): void {
       /* quota / blocked: the project just isn't remembered */
     }
   }, 150);
+}
+
+// ---- undo history ------------------------------------------------------
+
+// Up to 50 earlier cases. Every case edit pushes one (a drag pushes once, on
+// drag end); undo / redo swap the case without pushing.
+const HISTORY = 50;
+const undoStack: CaseData[] = [];
+const redoStack: CaseData[] = [];
+
+export const canUndo = () => undoStack.length > 0;
+export const canRedo = () => redoStack.length > 0;
+
+function swapCase(from: CaseData[], to: CaseData[]): void {
+  const c = from.pop();
+  if (!c) return;
+  if (state.case) to.push(state.case);
+  const sel = state.selection;
+  const keep = sel && (sel.kind === "bus" ? sel.index < c.bus.length : sel.index < c.lines.length);
+  setState({ case: c, selection: keep ? sel : null, outage: null }, false);
+}
+
+export function undo(): void {
+  swapCase(undoStack, redoStack);
+}
+
+export function redo(): void {
+  swapCase(redoStack, undoStack);
 }
 
 export function caseSig(c: CaseData | null): string | null {
@@ -354,4 +389,69 @@ export function report(e: unknown, what: string): void {
   } else {
     log("error", `${what} failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+// ---- case actions ------------------------------------------------------
+
+// Shared by the diagram (canvas.ts), the Properties panel and the Data
+// tables: each one is a single setState({case}), so one undo step.
+type Extra = Partial<State>;
+
+export const NEW_BUS: Rec = { Type: "PQ", V: 1, Pg: 0, Qg: 0, Pd: 0, Qd: 0, Bs: 0 };
+export const NEW_LINE: Rec = { R: 0.01, X: 0.1, B: 0, Tap: 1 };
+export const NEW_TRAFO: Rec = { R: 0, X: 0.1, B: 0, Tap: 1, Kind: "trafo" };
+
+const finite = (v: unknown) => v !== null && v !== "" && v !== undefined && Number.isFinite(Number(v));
+
+/** Add a PQ bus (at diagram position `at`, or right of the others when they
+ *  all carry x, y) and select it. */
+export function addBus(c: CaseData, at?: { x: number; y: number }, extra: Extra = {}): void {
+  const nb: Rec = { ...NEW_BUS };
+  if (at) Object.assign(nb, at);
+  else if (c.bus.length && c.bus.every((b) => finite(b.x) && finite(b.y))) {
+    nb.x = Math.max(...c.bus.map((b) => Number(b.x))) + 4.001;
+    nb.y = Math.max(...c.bus.map((b) => Number(b.y))) + 0.001;
+  }
+  setState({ case: { ...c, bus: [...c.bus, nb] }, selection: { kind: "bus", index: c.bus.length }, ...extra });
+}
+
+/** Add a line (or, with NEW_TRAFO, a transformer) From -> To and select it. */
+export function addLine(c: CaseData, from = 1, to = Math.min(2, c.bus.length), data: Rec = NEW_LINE): void {
+  const nl: Rec = { From: from, To: to, ...data };
+  setState({ case: { ...c, lines: [...c.lines, nl] }, selection: { kind: "branch", index: c.lines.length } });
+}
+
+export function delLine(c: CaseData, i: number): void {
+  setState({ case: { ...c, lines: c.lines.filter((_, k) => k !== i) }, selection: null, outage: null });
+}
+
+/** Delete a bus: its lines go too and the buses after it are renumbered. */
+export function delBus(c: CaseData, i: number): void {
+  const fix = (v: unknown) => (Number(v) > i + 1 ? Number(v) - 1 : Number(v));
+  const lines = c.lines.filter((l) => Number(l.From) !== i + 1 && Number(l.To) !== i + 1)
+    .map((l) => ({ ...l, From: fix(l.From), To: fix(l.To) }));
+  setState({ case: { ...c, bus: c.bus.filter((_, k) => k !== i), lines }, selection: null, outage: null });
+}
+
+export function editBus(c: CaseData, i: number, patch: Rec, extra: Extra = {}): void {
+  setState({ case: { ...c, bus: c.bus.map((b, k) => (k === i ? { ...b, ...patch } : b)) }, ...extra });
+}
+
+export function editLine(c: CaseData, i: number, patch: Rec, extra: Extra = {}): void {
+  setState({ case: { ...c, lines: c.lines.map((l, k) => (k === i ? { ...l, ...patch } : l)) }, ...extra });
+}
+
+/** Start an empty drawing: one Slack bus (V = 1.0); the canvas opens with the
+ *  Bus tool active. */
+export function newNetwork(): void {
+  setState({
+    case: { name: "New network", bus: [{ ...NEW_BUS, Type: "Slack", x: 0.001, y: 0.001 }], lines: [],
+            settings: { ...(state.case?.settings ?? DEFAULT_SETTINGS) } },
+    results: null, solvedCase: null, solvedSig: null, selection: null, outage: null, conversion: null,
+    started: true, fileName: "New_network.gridlens.json",
+  });
+  navigate("canvas");
+  window.dispatchEvent(new CustomEvent("gl:tool", { detail: "bus" }));
+  window.dispatchEvent(new CustomEvent("gl:fit"));
+  log("info", "New network: add buses with the Bus tool (B), then lines (L), generators (G) and loads (D).");
 }

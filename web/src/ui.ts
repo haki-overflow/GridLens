@@ -13,6 +13,12 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+/** True when a key press goes to a text field, so shortcuts must ignore it. */
+export function isTyping(e: Event): boolean {
+  const t = e.target as HTMLElement | null;
+  return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+}
+
 // ---- ui ----------------------------------------------------------------
 
 // Small DOM helpers for the document views: tables, cards, headlines,
@@ -229,6 +235,8 @@ export const ICON = {
   doc: svg('<path d="M4 2h6l3 3v9H4z"/>'),
   calc: svg('<rect x="3" y="2" width="10" height="12"/><path d="M5.5 5h5M5.5 8h1M9.5 8h1M5.5 11h1M9.5 11h1"/>'),
   chev: svg('<path d="M6 4l4 4-4 4"/>'),
+  undo: svg('<path d="M3 6h7a3.5 3.5 0 0 1 0 7H6"/><path d="M6 3L3 6l3 3"/>'),
+  redo: svg('<path d="M13 6H6a3.5 3.5 0 0 0 0 7h4"/><path d="M10 3l3 3-3 3"/>'),
 };
 
 // ---- zip ---------------------------------------------------------------

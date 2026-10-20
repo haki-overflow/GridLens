@@ -1,6 +1,6 @@
 // Panels: project tree, properties, output.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, getState, isStale, navigateView, setState, subscribe, viewOf, type CaseData, type Rec, type Settings, type State } from "./app";
+import { VIEWS, addBus, addLine, delBus, delLine, editBus, editLine, getState, isStale, navigateView, setState, subscribe, viewOf, type CaseData, type Rec, type Settings, type State } from "./app";
 import { h } from "./ui";
 
 // ---- nav ---------------------------------------------------------------
@@ -106,40 +106,13 @@ function checkInput(value: boolean, commit: (v: boolean) => void): HTMLInputElem
   return i;
 }
 
-function editBus(c: CaseData, i: number, patch: Rec): void {
-  setState({ case: { ...c, bus: c.bus.map((b, k) => (k === i ? { ...b, ...patch } : b)) } });
-}
-function editLine(c: CaseData, i: number, patch: Rec): void {
-  setState({ case: { ...c, lines: c.lines.map((l, k) => (k === i ? { ...l, ...patch } : l)) } });
-}
 function editSettings(c: CaseData, patch: Partial<Settings>): void {
   setState({ case: { ...c, settings: { ...c.settings, ...patch } } });
 }
+/** The case as it is now: panel inputs may outlive the case they were built
+ *  from (the panel is not rebuilt while a field has focus). */
+const cur = (c: CaseData): CaseData => getState().case ?? c;
 
-/** Add / remove buses and lines. Deleting a bus drops its lines and renumbers the rest. */
-function addBus(c: CaseData): void {
-  const xs = c.bus.map((b) => Number(b.x)).filter((v) => !Number.isNaN(v));
-  const ys = c.bus.map((b) => Number(b.y)).filter((v) => !Number.isNaN(v));
-  const nb: Rec = { Type: "PQ", V: 1, Pg: 0, Qg: 0, Pd: 0, Qd: 0, Bs: 0 };
-  if (xs.length === c.bus.length && xs.length) {
-    nb.x = Math.max(...xs) + 4.001;
-    nb.y = Math.max(...ys) + 0.001;
-  }
-  setState({ case: { ...c, bus: [...c.bus, nb] }, selection: { kind: "bus", index: c.bus.length } });
-}
-function addLine(c: CaseData): void {
-  const nl: Rec = { From: 1, To: Math.min(2, c.bus.length), R: 0.01, X: 0.1, B: 0, Tap: 1 };
-  setState({ case: { ...c, lines: [...c.lines, nl] }, selection: { kind: "branch", index: c.lines.length } });
-}
-function delLine(c: CaseData, i: number): void {
-  setState({ case: { ...c, lines: c.lines.filter((_, k) => k !== i) }, selection: null, outage: null });
-}
-function delBus(c: CaseData, i: number): void {
-  const fix = (v: unknown) => (Number(v) > i + 1 ? Number(v) - 1 : Number(v));
-  const lines = c.lines.filter((l) => Number(l.From) !== i + 1 && Number(l.To) !== i + 1)
-    .map((l) => ({ ...l, From: fix(l.From), To: fix(l.To) }));
-  setState({ case: { ...c, bus: c.bus.filter((_, k) => k !== i), lines }, selection: null, outage: null });
-}
 function actionBtn(label: string, fn: () => void, danger = false): HTMLElement {
   const b = h("button", `pbtn${danger ? " danger" : ""}`, label);
   b.type = "button";
@@ -166,18 +139,18 @@ function projectPanel(c: CaseData): HTMLElement {
   const [g2, b2] = group("Study settings");
   b2.append(
     row("Method", selectInput(["Newton-Raphson", "Fast Decoupled", "Gauss-Seidel"], st.method,
-      (v) => editSettings(c, { method: v }))),
-    row("Tolerance", numInput(st.tol, (v) => editSettings(c, { tol: v }), 12), "pu"),
-    row("Base", numInput(st.base, (v) => editSettings(c, { base: v }), 2), "MVA"),
-    row("V min", numInput(st.vmin, (v) => editSettings(c, { vmin: v }), 3), "pu"),
-    row("V max", numInput(st.vmax, (v) => editSettings(c, { vmax: v }), 3), "pu"));
+      (v) => editSettings(cur(c), { method: v }))),
+    row("Tolerance", numInput(st.tol, (v) => editSettings(cur(c), { tol: v }), 12), "pu"),
+    row("Base", numInput(st.base, (v) => editSettings(cur(c), { base: v }), 2), "MVA"),
+    row("V min", numInput(st.vmin, (v) => editSettings(cur(c), { vmin: v }), 3), "pu"),
+    row("V max", numInput(st.vmax, (v) => editSettings(cur(c), { vmax: v }), 3), "pu"));
   const [g3, b3] = group("Advanced", false);
   b3.append(
-    row("Generator Q limits", checkInput(st.qlim, (v) => editSettings(c, { qlim: v }))),
-    row("Transformer taps", checkInput(st.taps, (v) => editSettings(c, { taps: v }))),
-    row("Bus shunts", checkInput(st.shunts, (v) => editSettings(c, { shunts: v }))));
+    row("Generator Q limits", checkInput(st.qlim, (v) => editSettings(cur(c), { qlim: v }))),
+    row("Transformer taps", checkInput(st.taps, (v) => editSettings(cur(c), { taps: v }))),
+    row("Bus shunts", checkInput(st.shunts, (v) => editSettings(cur(c), { shunts: v }))));
   const acts = h("div", "pacts");
-  acts.append(actionBtn("+ Add bus", () => addBus(c)), actionBtn("+ Add line", () => addLine(c)));
+  acts.append(actionBtn("+ Add bus", () => addBus(cur(c))), actionBtn("+ Add line", () => addLine(cur(c))));
   box.append(g1, g2, g3, acts, h("div", "empty", "Pick a bus or line above, or click it on the diagram, to edit it."));
   return box;
 }
@@ -186,9 +159,9 @@ function busPanel(c: CaseData, i: number, s: State): HTMLElement {
   const b = c.bus[i] ?? {};
   const box = h("div", "props");
   const [g, body] = group(`Bus ${i + 1}`);
-  const ed = (k: string) => (v: number) => editBus(c, i, { [k]: v });
+  const ed = (k: string) => (v: number) => editBus(cur(c), i, { [k]: v });
   body.append(
-    row("Type", selectInput(["Slack", "PV", "PQ"], String(b.Type ?? "PQ"), (v) => editBus(c, i, { Type: v }))),
+    row("Type", selectInput(["Slack", "PV", "PQ"], String(b.Type ?? "PQ"), (v) => editBus(cur(c), i, { Type: v }))),
     row("V setpoint", numInput(b.V, ed("V")), "pu"),
     row("Pg", numInput(b.Pg, ed("Pg")), "pu"),
     row("Qg", numInput(b.Qg, ed("Qg")), "pu"),
@@ -197,7 +170,7 @@ function busPanel(c: CaseData, i: number, s: State): HTMLElement {
     row("Shunt Bs", numInput(b.Bs ?? 0, ed("Bs")), "pu"));
   box.append(g);
   const acts = h("div", "pacts");
-  acts.append(actionBtn(`Delete bus ${i + 1}`, () => delBus(c, i), true));
+  acts.append(actionBtn(`Delete bus ${i + 1}`, () => delBus(cur(c), i), true));
   box.append(acts);
   if (c.settings.qlim) {
     const [gq, bq] = group("Generator limits");
@@ -221,18 +194,20 @@ function busPanel(c: CaseData, i: number, s: State): HTMLElement {
 function linePanel(c: CaseData, i: number, s: State): HTMLElement {
   const l = c.lines[i] ?? {};
   const box = h("div", "props");
-  const [g, body] = group(`Line ${l.From}-${l.To}`);
-  const ed = (k: string) => (v: number) => editLine(c, i, { [k]: v });
+  const [g, body] = group(`${l.Kind === "trafo" ? "Transformer" : "Line"} ${l.From}-${l.To}`);
+  const ed = (k: string) => (v: number) => editLine(cur(c), i, { [k]: v });
   body.append(
     row("From bus", numInput(l.From, ed("From"), 0)),
     row("To bus", numInput(l.To, ed("To"), 0)),
     row("R", numInput(l.R, ed("R")), "pu"),
     row("X", numInput(l.X, ed("X")), "pu"),
     row("B charging", numInput(l.B, ed("B")), "pu"),
-    row("Tap", numInput(l.Tap ?? 1, ed("Tap"), 3), "ratio"));
+    row("Tap", numInput(l.Tap ?? 1, ed("Tap"), 3), "ratio"),
+    row("Kind", selectInput(["line", "trafo"], l.Kind === "trafo" ? "trafo" : "line",
+      (v) => editLine(cur(c), i, { Kind: v }))));
   box.append(g);
   const acts = h("div", "pacts");
-  acts.append(actionBtn(`Delete line ${l.From}-${l.To}`, () => delLine(c, i), true));
+  acts.append(actionBtn(`Delete line ${l.From}-${l.To}`, () => delLine(cur(c), i), true));
   box.append(acts);
   const r = s.results && !isStale(s) ? s.results : null;
   const f = r?.flows[i] as Rec | undefined;

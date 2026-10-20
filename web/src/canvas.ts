@@ -1,24 +1,45 @@
 // Diagram canvas (D3).
 // Sections follow the order of the files this one replaced; search for '// ----'.
 import * as d3 from "d3";
-import { caseSig, getState, post, report, setState, subscribe, type CaseData, type Rec, type State } from "./app";
+import {
+  ApiError, NEW_LINE, NEW_TRAFO, addBus, addLine, caseSig, delBus, delLine, editBus, getState, post, report,
+  setState, subscribe, type CaseData, type Rec, type Selection, type State,
+} from "./app";
 import { registerDoc } from "./documents";
-import { h } from "./ui";
+import { h, isTyping } from "./ui";
 
 // ---- canvas ------------------------------------------------------------
 
 // One-line diagram (D3). Positions and branch routes come from
 // /api/layout (oneline.layout, the same as the Streamlit diagram); bus
-// colours from the last results. Wheel = zoom, drag = pan, Fit (Ctrl+0),
-// click a bus or line to select it.
+// colours from the last results. Wheel = zoom, drag empty space = pan,
+// Fit (Ctrl+0). Drawing tools: Select (V), Bus (B), Line (L),
+// Transformer (T), Generator (G), Load (D), Delete (Del); Esc = Select.
 //
 // Semantic zoom: the d3 zoom transform t is NOT put on a <g>. Every point is
 // drawn at screen coordinates t.applyX(x), t.applyY(y), so strokes and text
 // keep their CSS pixel sizes and stay sharp at every zoom level. Redraws are
 // batched with requestAnimationFrame.
 
-interface Layout { cx: number[]; cy: number[]; w: number[]; routes: [number, number][][] }
 type Pt = [number, number];
+interface Layout { cx: number[]; cy: number[]; w: number[]; routes: Pt[][] }
+interface Geo { cx: number[]; cy: number[]; w: number[]; routes: (Pt[] | null)[] }
+interface Drag { i: number; x: number; y: number }
+interface Hit { kind: "bus" | "branch" | "gen" | "load"; i: number }
+type Tool = "select" | "bus" | "line" | "trafo" | "gen" | "load" | "delete";
+
+const TOOLS: { id: Tool; label: string; key: string; hint: string }[] = [
+  { id: "select", label: "Select", key: "V",
+    hint: "Click to select, drag a bar to move it, drag empty space to pan, wheel to zoom. Double-click to edit." },
+  { id: "bus", label: "Bus", key: "B", hint: "Click empty canvas to add a PQ bus. Esc returns to Select." },
+  { id: "line", label: "Line", key: "L", hint: "Press on a bus, drag to another bus and release to add a line." },
+  { id: "trafo", label: "Transformer", key: "T",
+    hint: "Press on a bus, drag to another bus and release to add a transformer." },
+  { id: "gen", label: "Generator", key: "G",
+    hint: "Click a bus to add a generator: Slack if the case has none, otherwise PV (Pg 0.5, V 1.0 pu)." },
+  { id: "load", label: "Load", key: "D", hint: "Click a bus to add a load (Pd 0.5, Qd 0.2 pu)." },
+  { id: "delete", label: "Delete", key: "Del", hint: "Click a bus, line, generator or load to remove it." },
+];
 
 const BAND = (v: number, lo: number, hi: number) =>
   v < lo ? "var(--red)" : v > hi ? "var(--violet)"
@@ -26,84 +47,197 @@ const BAND = (v: number, lo: number, hi: number) =>
 
 /** Symbol size in px for one diagram unit: follows the zoom, within limits. */
 const symUnit = (k: number) => Math.max(20, Math.min(k, 60));
+const num = (v: unknown) => (v === null || v === undefined || v === "" ? NaN : Number(v));
+const hasXY = (b: Rec) => Number.isFinite(num(b.x)) && Number.isFinite(num(b.y));
+const snap = (v: number) => Math.round(v * 2) / 2;
+/** Stored bar position: raw diagram units on the 0.5 grid, never whole. */
+const stored = (v: number) => snap(v) + 0.001;
+const isGen = (b: Rec) => b.Type === "Slack" || b.Type === "PV";
+const isLoad = (b: Rec) => (Number(b.Pd) || 0) !== 0 || (Number(b.Qd) || 0) !== 0;
+const DEFAULT_W = 3;
+
+/** x, y of every bus are usable as raw diagram units (not grid cells). */
+const ownXY = (c: CaseData) => c.bus.length > 0 && c.bus.every(hasXY)
+  && !c.bus.every((b) => Number.isInteger(num(b.x)) && Number.isInteger(num(b.y)));
+
+/** A simple connector when the server routes are not available: a straight
+ *  drop when the bars overlap horizontally, otherwise one elbow. */
+function connector(cx: number[], cy: number[], w: number[], a: number, b: number): Pt[] {
+  const aL = cx[a]! - w[a]! / 2, aR = cx[a]! + w[a]! / 2;
+  const bL = cx[b]! - w[b]! / 2, bR = cx[b]! + w[b]! / 2;
+  const lo = Math.max(aL, bL), hi = Math.min(aR, bR);
+  if (hi - lo > 0.2) {
+    const x = (lo + hi) / 2;
+    return [[x, cy[a]!], [x, cy[b]!]];
+  }
+  const right = cx[b]! > cx[a]!;
+  const xa = right ? aR - 0.3 : aL + 0.3;
+  return [[xa, cy[a]!], [xa, cy[b]!], [right ? bL : bR, cy[b]!]];
+}
+
+/** Bars and routes. The server layout is used as is when it belongs to this
+ *  exact case; otherwise (a drawing in progress, or a refused layout) bars
+ *  sit at their x, y and branches get simple connectors. */
+function geometry(c: CaseData, L: Layout | null, matched: boolean, drag: Drag | null): Geo {
+  const n = c.bus.length;
+  const fromL = !!L && L.cx.length === n;
+  const own = ownXY(c);
+  const cx: number[] = [], cy: number[] = [], w: number[] = [];
+  c.bus.forEach((b, i) => {
+    let p: Pt;
+    if (matched && fromL) p = [L!.cx[i]!, L!.cy[i]!];
+    else if (own || (hasXY(b) && !fromL)) p = [num(b.x), num(b.y)];
+    else if (L && i < L.cx.length) p = [L.cx[i]!, L.cy[i]!];
+    else p = [i * 6, 0];
+    if (drag?.i === i) p = [drag.x, drag.y];
+    cx.push(p[0]);
+    cy.push(p[1]);
+    w.push(L && i < L.w.length ? L.w[i]! : DEFAULT_W);
+  });
+  const useRoutes = matched && fromL && L!.routes.length === c.lines.length;
+  const routes = c.lines.map((l, k) => {
+    const a = num(l.From) - 1, b = num(l.To) - 1;
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0 || a >= n || b >= n || a === b) return null;
+    if (useRoutes && drag?.i !== a && drag?.i !== b) return L!.routes[k] ?? null;
+    return connector(cx, cy, w, a, b);
+  });
+  return { cx, cy, w, routes };
+}
+
+const sigOf = (c: CaseData | null) => c ? JSON.stringify([c.name, c.bus.length,
+  c.lines.map((l) => [l.From, l.To]), c.bus.map((b) => [b.x, b.y])]) : null;
+
+function hitOf(el: EventTarget | Element | null): Hit | null {
+  const tag = (el as Element | null)?.closest?.("[data-hit]")?.getAttribute("data-hit");
+  if (!tag) return null;
+  const [kind, i] = tag.split(":");
+  return { kind: kind as Hit["kind"], i: Number(i) };
+}
 
 registerDoc("canvas", (el) => {
   const wrap = h("div", "canvas-wrap");
   el.append(wrap);
   const svg = d3.select(wrap).append("svg").attr("role", "img")
     .attr("aria-label", "One-line diagram");
+  const node = svg.node()!;
   const defs = svg.append("defs");
   const pat = defs.append("pattern").attr("id", "gl-grid").attr("patternUnits", "userSpaceOnUse")
     .attr("class", "gridpat");
   const patH = pat.append("line"), patV = pat.append("line");
   const grid = svg.append("rect").attr("class", "gridrect").attr("width", "100%").attr("height", "100%")
     .attr("fill", "url(#gl-grid)");
-  const gBranch = svg.append("g"), gBus = svg.append("g"), gText = svg.append("g");
+  const gBranch = svg.append("g"), gBus = svg.append("g"), gText = svg.append("g"), gOver = svg.append("g");
+
   let t = d3.zoomIdentity;
+  let tool: Tool = "select";
+  let drag: Drag | null = null;
+  let rubber: { from: number; x0: number; y0: number; x: number; y: number } | null = null;
+  let layout: Layout | null = null;
+  let layoutFor: string | null = null; // the case signature the layout belongs to
+  let asked: string | null = null;
+  let caseName: string | null = null;
+  let needFit = true;
+  let token = 0;
   let frame = 0;
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(getState()); });
   };
+  const matched = (c: CaseData) => !!layout && layoutFor === sigOf(c);
+  const geo = (c: CaseData, d: Drag | null = drag) => geometry(c, layout, matched(c), d);
+
+  /** The case with x, y on every bus (from the current drawing), so the
+   *  first edit made on the canvas fixes the layout in place. */
+  const placed = (c: CaseData): CaseData => {
+    if (ownXY(c)) return c;
+    const g = geo(c, null);
+    return { ...c, bus: c.bus.map((b, i) => ({ ...b, x: stored(g.cx[i]!), y: stored(g.cy[i]!) })) };
+  };
+
   const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([2, 400])
+    .filter((e: MouseEvent) => {
+      if (e.type === "wheel") return true;
+      if (e.ctrlKey || e.button) return false;
+      return !((tool === "line" || tool === "trafo") && hitOf(e.target) && hitOf(e.target)!.kind !== "branch");
+    })
     .on("zoom", (e: d3.D3ZoomEvent<SVGSVGElement, unknown>) => { t = e.transform; schedule(); });
   svg.call(zoom).on("dblclick.zoom", null);
 
+  // ---- overlays: tool group, view options, chips, hint ----
   interface OutageData { k: number; sig: string | null; res: Rec[]; flows: Rec[] }
   let outageData: OutageData | null = null;
   let outageAsked = "";
   const tools = h("div", "canvas-tools");
-  const opt = (label: string, title: string, on: () => void) => {
+  const toolGroup = h("div", "ctool-group");
+  toolGroup.setAttribute("role", "toolbar");
+  toolGroup.setAttribute("aria-label", "Drawing tools");
+  const optGroup = h("div", "ctool-group");
+  tools.append(toolGroup, optGroup);
+  const btn = (host: HTMLElement, label: string, title: string, on: () => void, key = "") => {
     const b = h("button", "ctool", label);
     b.type = "button";
     b.title = title;
+    if (key) b.append(h("span", "k", key));
     b.addEventListener("click", (e) => { e.stopPropagation(); on(); });
-    tools.append(b);
+    host.append(b);
     return b;
   };
+  const toolBtns = TOOLS.map((x) => [x.id, btn(toolGroup, x.label, `${x.label} (${x.key})`,
+    () => setTool(x.id), x.key)] as const);
   const toggle = (k: "grid" | "flows" | "angles") => () => {
     const v = getState().view;
     setState({ view: { ...v, [k]: !v[k] } });
   };
-  opt("Fit", "Fit the diagram to the window (Ctrl+0)", () => window.dispatchEvent(new CustomEvent("gl:fit")));
+  btn(optGroup, "Fit", "Fit the diagram to the window (Ctrl+0)", () => fit());
   const optBtns: [string, HTMLButtonElement][] = [
-    ["grid", opt("Grid", "Show the drawing grid", toggle("grid"))],
-    ["flows", opt("Flows", "Show line flows (MW)", toggle("flows"))],
-    ["angles", opt("Angles", "Show bus voltage angles", toggle("angles"))],
+    ["grid", btn(optGroup, "Grid", "Show the drawing grid", toggle("grid"))],
+    ["flows", btn(optGroup, "Flows", "Show line flows (MW)", toggle("flows"))],
+    ["angles", btn(optGroup, "Angles", "Show bus voltage angles", toggle("angles"))],
   ];
-  wrap.append(tools);
+  const chips = h("div", "canvas-chips");
   const chip = h("div", "outage-chip");
   chip.hidden = true;
   chip.title = "Click to clear";
   chip.addEventListener("click", () => setState({ outage: null }));
-  wrap.append(chip);
+  const warn = h("div", "canvas-warn");
+  warn.hidden = true;
+  chips.append(chip, warn);
+  const hint = h("div", "canvas-hint");
+  hint.setAttribute("aria-live", "polite");
+  wrap.append(tools, chips, hint);
 
-  let caseKey = "";
-  let layout: Layout | null = null;
-  let layoutSig: string | null = null;
-  let token = 0;
-  let fitted = false;
-  let drag: { i: number; x: number; y: number } | null = null;
+  function setTool(id: Tool): void {
+    tool = id;
+    rubber = null;
+    wrap.dataset.tool = id;
+    for (const [k, b] of toolBtns) {
+      b.classList.toggle("on", k === id);
+      b.setAttribute("aria-pressed", String(k === id));
+    }
+    hint.textContent = TOOLS.find((x) => x.id === id)!.hint;
+    schedule();
+  }
+  setTool("select");
+  window.addEventListener("gl:tool", (e) => setTool((e as CustomEvent<Tool>).detail));
 
-  const fit = (animate = true) => {
-    if (!layout) return;
+  const fit = (animate = true): boolean => {
+    const c = getState().case;
     const box = wrap.getBoundingClientRect();
-    if (box.width < 10 || box.height < 10) return;
-    const xs = layout.cx.flatMap((c, i) => [c - layout!.w[i]! / 2, c + layout!.w[i]! / 2]);
-    const ys = layout.cy;
+    if (!c || !c.bus.length || box.width < 10 || box.height < 10) return false;
+    const g = geo(c, null);
+    const xs = g.cx.flatMap((x, i) => [x - g.w[i]! / 2, x + g.w[i]! / 2]);
     const x0 = Math.min(...xs) - 1.5, x1 = Math.max(...xs) + 1.5;
-    const y0 = Math.min(...ys) - 2.4, y1 = Math.max(...ys) + 2;
-    const k = Math.min(box.width / (x1 - x0), box.height / (y1 - y0), 60);
+    const y0 = Math.min(...g.cy) - 2.4, y1 = Math.max(...g.cy) + 2;
+    const k = Math.min(box.width / (x1 - x0), box.height / (y1 - y0), 40);
     const z = d3.zoomIdentity.translate(box.width / 2, box.height / 2).scale(k)
       .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
     (animate ? svg.transition().duration(120) : svg).call(zoom.transform as never, z);
+    return true;
+  };
+  const fitIfNeeded = () => {
+    if (needFit && fit(false)) needFit = false;
   };
   window.addEventListener("gl:fit", () => fit());
-  new ResizeObserver(() => {
-    if (!fitted && layout) {
-      fit(false);
-      fitted = true;
-    }
-  }).observe(wrap);
+  new ResizeObserver(fitIfNeeded).observe(wrap);
 
   /** Grid lines stay 1px: the pattern tile is sized in screen pixels. */
   const drawGrid = (on: boolean) => {
@@ -120,6 +254,7 @@ registerDoc("canvas", (el) => {
     patV.attr("x1", 0.5).attr("y1", 0).attr("x2", 0.5).attr("y2", p);
   };
 
+  // ---- draw ----
   const draw = (s: State) => {
     for (const [k, b] of optBtns) {
       const on = s.view[k as "grid" | "flows" | "angles"];
@@ -130,14 +265,13 @@ registerDoc("canvas", (el) => {
     gBranch.selectAll("*").remove();
     gBus.selectAll("*").remove();
     gText.selectAll("*").remove();
-    if (!layout || !s.case || layout.cx.length !== s.case.bus.length) return;
+    gOver.selectAll("*").remove();
     const c = s.case;
-    const L = layout;
+    if (!c) return;
+    const G = geo(c);
     const X = (x: number) => t.applyX(x), Y = (y: number) => t.applyY(y);
     const u = symUnit(t.k);
-    const cxOf = (i: number) => (drag?.i === i ? drag.x : L.cx[i]!);
-    const cyOf = (i: number) => (drag?.i === i ? drag.y : L.cy[i]!);
-    const fresh = s.results && caseSig(s.case) === s.solvedSig ? s.results : null;
+    const fresh = s.results && caseSig(c) === s.solvedSig ? s.results : null;
     const sel = s.selection;
     const od = fresh && s.outage !== null && outageData && outageData.k === s.outage
       && outageData.sig === s.solvedSig ? outageData : null;
@@ -150,26 +284,32 @@ registerDoc("canvas", (el) => {
     } else chip.hidden = true;
 
     const line = d3.line<Pt>().x((p) => X(p[0])).y((p) => Y(p[1]));
-    L.routes.forEach((pts, k) => {
+    G.routes.forEach((pts, k) => {
+      if (!pts) return;
+      const l = c.lines[k]!;
       const isSel = sel?.kind === "branch" && sel.index === k;
       const tripped = !!fresh && s.outage === k;
       gBranch.append("path").attr("class", `branch${isSel ? " sel" : ""}${tripped ? " tripped" : ""}`)
         .attr("d", line(pts));
+      const [mid, dir] = longest(pts);
+      if (l.Kind === "trafo") {
+        const r = Math.max(5, Math.min(0.22 * u, 10));
+        for (const sgn of [-1, 1]) {
+          gBranch.append("circle").attr("class", `trafo-sym${isSel ? " sel" : ""}`)
+            .attr("cx", X(mid[0]) + sgn * 0.65 * r * dir[0]).attr("cy", Y(mid[1]) + sgn * 0.65 * r * dir[1])
+            .attr("r", r);
+        }
+      }
       if (tripped) {
-        const m = pts[Math.floor((pts.length - 1) / 2)]!, n2 = pts[Math.floor((pts.length - 1) / 2) + 1] ?? m;
-        gText.append("text").attr("class", "trip-x").attr("x", X((m[0] + n2[0]) / 2)).attr("y", Y((m[1] + n2[1]) / 2) + 6)
+        gText.append("text").attr("class", "trip-x").attr("x", X(mid[0])).attr("y", Y(mid[1]) + 6)
           .attr("text-anchor", "middle").text("✕");
       }
-      gBranch.append("path").attr("class", "branch hit").attr("d", line(pts))
-        .on("click", (e: MouseEvent) => {
-          e.stopPropagation();
-          setState({ selection: { kind: "branch", index: k } });
-        })
-        .append("title").text(`Line ${c.lines[k]?.From}-${c.lines[k]?.To}`);
+      gBranch.append("path").attr("class", "branch hit").attr("data-hit", `branch:${k}`).attr("d", line(pts))
+        .append("title").text(`${l.Kind === "trafo" ? "Transformer" : "Line"} ${l.From}-${l.To}`);
     });
 
     c.bus.forEach((b, i) => {
-      const x = cxOf(i), y = cyOf(i), w = L.w[i]!;
+      const x = G.cx[i]!, y = G.cy[i]!, w = G.w[i]!;
       const xl = X(x - w / 2), xr = X(x + w / 2), yy = Y(y);
       const res = resRows?.[i];
       const v = res ? Number(res["V (pu)"]) : NaN;
@@ -178,48 +318,33 @@ registerDoc("canvas", (el) => {
       gBus.append("line").attr("class", "bar-line").attr("x1", xl).attr("x2", xr)
         .attr("y1", yy).attr("y2", yy)
         .style("stroke", isSel ? "var(--accent)" : colour);
-      const hit = gBus.append("rect").attr("class", "bus-hit").attr("x", xl - 3).attr("y", yy - 8)
-        .attr("width", xr - xl + 6).attr("height", 16)
-        .on("click", (e: MouseEvent) => {
-          e.stopPropagation();
-          setState({ selection: { kind: "bus", index: i } });
-        });
-      hit.append("title").text(`Bus ${i + 1} - drag to move`);
-      let grab: Pt = [0, 0];
-      hit.call(d3.drag<SVGRectElement, unknown>()
-        .on("start", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
-          const [ux, uy] = t.invert(d3.pointer(e.sourceEvent as MouseEvent, svg.node()));
-          grab = [ux - L.cx[i]!, uy - L.cy[i]!];
-          setState({ selection: { kind: "bus", index: i } });
-        })
-        .on("drag", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
-          const [ux, uy] = t.invert(d3.pointer(e.sourceEvent as MouseEvent, svg.node()));
-          drag = { i, x: Math.round((ux - grab[0]) * 2) / 2, y: Math.round((uy - grab[1]) * 2) / 2 };
-          schedule();
-        })
-        .on("end", () => {
-          if (!drag) return;
-          L.cx[i] = drag.x;
-          L.cy[i] = drag.y;
-          drag = null;
-          commitPositions();
-        }));
+      const hit = gBus.append("rect").attr("class", "bus-hit").attr("data-hit", `bus:${i}`)
+        .attr("x", xl - 3).attr("y", yy - 8).attr("width", xr - xl + 6).attr("height", 16);
+      hit.append("title").text(tool === "select" ? `Bus ${i + 1} - drag to move` : `Bus ${i + 1}`);
+      hit.call(busDrag(i));
       const sx = xr - 0.45 * u;
-      if (b.Type === "Slack" || b.Type === "PV") {
+      if (isGen(b)) {
         gBus.append("line").attr("class", "sym").attr("x1", sx).attr("x2", sx).attr("y1", yy).attr("y2", yy - 0.9 * u);
         gBus.append("circle").attr("class", "sym").attr("cx", sx).attr("cy", yy - 1.2 * u).attr("r", 0.3 * u);
         gText.append("text").attr("class", "sym-label").attr("x", sx).attr("y", yy - 1.2 * u)
           .attr("text-anchor", "middle").attr("dominant-baseline", "central").text("G");
         gText.append("text").attr("class", "angle-label").attr("x", sx + 0.3 * u + 4).attr("y", yy - 1.2 * u)
           .attr("dominant-baseline", "central").text(`G${i + 1}`);
+        gBus.append("circle").attr("class", "sym-hit").attr("data-hit", `gen:${i}`)
+          .attr("cx", sx).attr("cy", yy - 1.05 * u).attr("r", Math.max(0.45 * u, 10))
+          .append("title").text(`Generator at bus ${i + 1} (${String(b.Type)})`);
       }
-      if (Number(b.Pd) > 0) {
+      if (isLoad(b)) {
         const lx = xl + 0.45 * u;
         gBus.append("line").attr("class", "sym").attr("x1", lx).attr("x2", lx).attr("y1", yy).attr("y2", yy + 0.75 * u);
         gBus.append("path").attr("class", "sym-load")
           .attr("d", `M${lx - 0.17 * u},${yy + 0.75 * u}L${lx + 0.17 * u},${yy + 0.75 * u}L${lx},${yy + 1.02 * u}Z`);
         gText.append("text").attr("class", "angle-label").attr("x", lx + 0.17 * u + 4).attr("y", yy + 0.9 * u)
           .attr("dominant-baseline", "central").text(`Load ${i + 1}`);
+        gBus.append("rect").attr("class", "sym-hit").attr("data-hit", `load:${i}`)
+          .attr("x", lx - Math.max(0.25 * u, 6)).attr("y", yy + 8)
+          .attr("width", Math.max(0.5 * u, 12)).attr("height", Math.max(1.02 * u - 8, 10))
+          .append("title").text(`Load at bus ${i + 1}`);
       }
       gText.append("text").attr("class", "bus-label").attr("x", xl + 2).attr("y", yy - 7)
         .text(Number.isFinite(v) ? `${i + 1}  ${v.toFixed(3)}` : `${i + 1}`);
@@ -230,37 +355,170 @@ registerDoc("canvas", (el) => {
     });
 
     if (s.view.flows && fresh && flowRows) {
-      L.routes.forEach((pts, k) => {
-        if (od && k === s.outage) return;
+      G.routes.forEach((pts, k) => {
+        if (!pts || (od && k === s.outage)) return;
         const f = flowRows[od && s.outage !== null && k > s.outage ? k - 1 : k] as Rec | undefined;
         if (!f || pts.length < 2) return;
-        let best = 0, at: Pt = pts[0]!, horiz = false;
-        for (let j = 1; j < pts.length; j++) {
-          const a = pts[j - 1]!, b = pts[j]!;
-          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          if (len > best) [best, at, horiz] = [len, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
-            Math.abs(b[0] - a[0]) > Math.abs(b[1] - a[1])];
-        }
+        const [at, dir] = longest(pts);
+        const horiz = Math.abs(dir[0]) > Math.abs(dir[1]);
         gText.append("text").attr("class", "flow-label").attr("x", horiz ? X(at[0]) : X(at[0]) + 5)
           .attr("y", horiz ? Y(at[1]) - 5 : Y(at[1])).attr("text-anchor", horiz ? "middle" : "start")
           .text(`${(Number(f.P_ij) * fresh.base).toFixed(1)} MW`);
       });
     }
+
+    if (rubber) {
+      gOver.append("line").attr("class", "rubber").attr("x1", rubber.x0).attr("y1", rubber.y0)
+        .attr("x2", rubber.x).attr("y2", rubber.y);
+    }
   };
 
-  /** Save the bar positions into the case (raw diagram units, never all whole
-   *  numbers, so oneline.layout does not read them as grid cells). */
-  const commitPositions = () => {
+  /** Midpoint and unit direction of the longest segment of a route. */
+  function longest(pts: Pt[]): [Pt, Pt] {
+    let best = -1, at: Pt = pts[0]!, dir: Pt = [1, 0];
+    for (let j = 1; j < pts.length; j++) {
+      const a = pts[j - 1]!, b = pts[j]!;
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len > best) {
+        best = len;
+        at = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        dir = len > 0 ? [(b[0] - a[0]) / len, (b[1] - a[1]) / len] : [1, 0];
+      }
+    }
+    return [at, dir];
+  }
+
+  // ---- interaction ----
+  const toUnits = (e: Event): Pt => t.invert(d3.pointer(e, node));
+
+  /** Select tool: drag a bar. Positions change only locally while dragging;
+   *  the case (and the undo history) is updated once, on drag end. */
+  function busDrag(i: number) {
+    let grab: Pt = [0, 0];
+    return d3.drag<SVGRectElement, unknown>()
+      .filter((e: MouseEvent) => tool === "select" && !e.button && !e.ctrlKey)
+      .on("start", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
+        const c = getState().case;
+        if (!c) return;
+        const g = geo(c, null);
+        const [ux, uy] = toUnits(e.sourceEvent as Event);
+        grab = [ux - g.cx[i]!, uy - g.cy[i]!];
+      })
+      .on("drag", (e: d3.D3DragEvent<SVGRectElement, unknown, unknown>) => {
+        const [ux, uy] = toUnits(e.sourceEvent as Event);
+        drag = { i, x: snap(ux - grab[0]), y: snap(uy - grab[1]) };
+        schedule();
+      })
+      .on("end", () => {
+        const d = drag;
+        drag = null;
+        const c = getState().case;
+        if (!d || !c) return;
+        const p = placed(c);
+        setState({ case: { ...p, bus: p.bus.map((b, k) => (k === d.i ? { ...b, x: stored(d.x), y: stored(d.y) } : b)) },
+          selection: { kind: "bus", index: d.i } });
+      });
+  }
+
+  const selectHit = (hit: Hit | null) => {
+    const selection: Selection | null = !hit ? null
+      : hit.kind === "branch" ? { kind: "branch", index: hit.i } : { kind: "bus", index: hit.i };
+    setState({ selection });
+  };
+
+  const addGen = (c: CaseData, i: number) => {
+    const b = c.bus[i]!;
+    const selection: Selection = { kind: "bus", index: i };
+    if (isGen(b)) return setState({ selection });
+    const slack = c.bus.some((x) => x.Type === "Slack");
+    editBus(placed(c), i, { Type: slack ? "PV" : "Slack", Pg: 0.5, V: 1.0 }, { selection });
+  };
+
+  const remove = (c: CaseData, hit: Hit) => {
+    const p = placed(c);
+    if (hit.kind === "bus") delBus(p, hit.i);
+    else if (hit.kind === "branch") delLine(p, hit.i);
+    else if (hit.kind === "gen") editBus(p, hit.i, { Type: "PQ", Pg: 0 });
+    else editBus(p, hit.i, { Pd: 0, Qd: 0 });
+  };
+
+  svg.on("click", (e: MouseEvent) => {
+    const c = getState().case;
+    if (!c) return;
+    const hit = hitOf(e.target);
+    const onBus = hit && hit.kind !== "branch";
+    if (tool === "bus" && !hit) {
+      const [ux, uy] = toUnits(e);
+      addBus(placed(c), { x: stored(ux), y: stored(uy) });
+    } else if (tool === "gen") {
+      if (onBus) addGen(c, hit.i);
+    } else if (tool === "load") {
+      if (onBus) editBus(placed(c), hit.i, { Pd: 0.5, Qd: 0.2 }, { selection: { kind: "bus", index: hit.i } });
+    } else if (tool === "delete") {
+      if (hit) remove(c, hit);
+    } else if (tool !== "line" && tool !== "trafo") {
+      selectHit(hit);
+    }
+  });
+
+  svg.on("dblclick", (e: MouseEvent) => {
+    const hit = hitOf(e.target);
+    if (!hit || tool === "delete") return;
+    selectHit(hit);
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(
+      ".ws-props .pgroup input:not([readonly]), .ws-props .pgroup select")?.focus());
+  });
+
+  // Line / Transformer: press on bus A, drag a rubber band, release on bus B.
+  node.addEventListener("pointerdown", (e) => {
+    if ((tool !== "line" && tool !== "trafo") || e.button !== 0) return;
+    const hit = hitOf(e.target);
+    if (!hit || hit.kind === "branch") return;
+    e.preventDefault();
+    const [px, py] = d3.pointer(e, node);
+    rubber = { from: hit.i, x0: px, y0: py, x: px, y: py };
+    node.setPointerCapture(e.pointerId);
+    schedule();
+  });
+  node.addEventListener("pointermove", (e) => {
+    if (!rubber) return;
+    [rubber.x, rubber.y] = d3.pointer(e, node);
+    schedule();
+  });
+  node.addEventListener("pointerup", (e) => {
+    if (!rubber) return;
+    const from = rubber.from;
+    rubber = null;
+    schedule();
+    const hit = hitOf(document.elementFromPoint(e.clientX, e.clientY));
+    const c = getState().case;
+    if (c && hit && hit.kind !== "branch" && hit.i !== from) {
+      addLine(placed(c), from + 1, hit.i + 1, tool === "trafo" ? NEW_TRAFO : NEW_LINE);
+    }
+  });
+  node.addEventListener("pointercancel", () => { rubber = null; schedule(); });
+
+  window.addEventListener("keydown", (e) => {
     const s = getState();
-    if (!layout || !s.case) return;
-    const L = layout;
-    setState({ case: { ...s.case, bus: s.case.bus.map((b, i) => (
-      { ...b, x: Math.round(L.cx[i]! * 2) / 2 + 0.001, y: Math.round(L.cy[i]! * 2) / 2 + 0.001 })) } });
-  };
+    if (s.activeDoc !== "canvas" || !s.started || isTyping(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Escape") {
+      setTool("select");
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      const sel = s.selection;
+      if (!sel || !s.case) setTool("delete");
+      else if (sel.kind === "bus") delBus(placed(s.case), sel.index);
+      else delLine(placed(s.case), sel.index);
+    } else {
+      const x = TOOLS.find((k) => k.key.length === 1 && k.key === e.key.toUpperCase());
+      if (x) {
+        e.preventDefault();
+        setTool(x.id);
+      }
+    }
+  });
 
-  const sigOf = (c: CaseData | null) => c ? JSON.stringify([c.name, c.bus.length,
-    c.lines.map((l) => [l.From, l.To]), c.bus.map((b) => [b.x, b.y])]) : null;
-
+  // ---- data: layout and the outage view ----
   const wantOutage = (s: State) => {
     if (!s.case || !s.results || s.outage === null || caseSig(s.case) !== s.solvedSig) return;
     if (outageData && outageData.k === s.outage && outageData.sig === s.solvedSig) return;
@@ -270,52 +528,50 @@ registerDoc("canvas", (el) => {
     const k = s.outage, sig = s.solvedSig;
     post<{ res: Rec[]; flows: Rec[] }>(`/api/outage/${k}`, s.case).then((o) => {
       outageData = { k, sig, res: o.res, flows: o.flows };
-      draw(getState());
+      schedule();
     }).catch((e) => report(e, "The outage case"));
   };
 
+  /** Ask the server for the layout. A refused (unfinished) drawing keeps the
+   *  canvas: it is drawn from the buses' x, y and a warning chip says why. */
   const refresh = async (c: CaseData) => {
     const my = ++token;
+    const sig = sigOf(c);
     try {
       const L = await post<Layout>("/api/layout", c);
       if (my !== token) return;
-      const first = !layout;
-      const key = `${c.name}|${c.bus.length}|${c.lines.length}`;
-      const newCase = key !== caseKey;
-      caseKey = key;
       layout = L;
-      draw(getState());
-      if (newCase) {
-        fit(false);
-        fitted = wrap.getBoundingClientRect().width > 10;
-      } else if (first || !fitted) {
-        fit(false);
-        fitted = wrap.getBoundingClientRect().width > 10;
-      }
+      layoutFor = sig;
+      warn.hidden = true;
     } catch (e) {
-      layout = null;
-      draw(getState());
-      report(e, "The diagram layout");
+      if (my !== token) return;
+      if (e instanceof ApiError && e.status === 422) {
+        warn.textContent = `Diagram: ${e.problems[0] ?? "the network is not finished"}`
+          + (e.problems.length > 1 ? ` (+${e.problems.length - 1} more)` : "");
+        warn.title = [...e.problems, "Press Run (F5) for the full list."].join("\n");
+        warn.hidden = false;
+      } else report(e, "The diagram layout");
     }
+    fitIfNeeded();
+    schedule();
   };
 
-  svg.on("click", () => setState({ selection: null }));
-  subscribe((s) => {
+  const onState = (s: State) => {
     wantOutage(s);
-    const sig = sigOf(s.case);
-    if (sig !== layoutSig) {
-      layoutSig = sig;
-      if (s.case) void refresh(s.case);
-      else {
-        layout = null;
-        draw(s);
-      }
-    } else {
-      draw(s);
+    if ((s.case?.name ?? null) !== caseName) {
+      caseName = s.case?.name ?? null;
+      layout = null;
+      layoutFor = null;
+      needFit = true;
+      warn.hidden = true;
     }
-  });
-  const s0 = getState();
-  layoutSig = sigOf(s0.case);
-  wantOutage(s0);
-  if (s0.case) void refresh(s0.case);
+    const sig = sigOf(s.case);
+    if (sig !== asked) {
+      asked = sig;
+      if (s.case) void refresh(s.case);
+    }
+    schedule();
+  };
+  subscribe(onState);
+  onState(getState());
 });

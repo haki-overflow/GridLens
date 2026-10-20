@@ -1,9 +1,9 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, report, reset, run, setState, subscribe, type State } from "./app";
+import { VIEWS, canRedo, canUndo, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, redo, report, reset, run, setState, subscribe, undo, type State } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
-import { ICON, h } from "./ui";
+import { ICON, h, isTyping } from "./ui";
 
 // ---- shell -------------------------------------------------------------
 
@@ -298,7 +298,12 @@ export function mountToolbar(bar: HTMLElement): void {
     ["Download results (.zip)", () => navigate("report"), !getState().results],
   ]);
 
-  bar.append(group(runB, stale, resetB), group(sel, fileMenu, file));
+  const undoB = btn(ICON.undo, "Undo", "Undo the last change to the case (Ctrl+Z)", "undo");
+  const redoB = btn(ICON.redo, "Redo", "Redo (Ctrl+Shift+Z or Ctrl+Y)", "redo");
+  undoB.addEventListener("click", undo);
+  redoB.addEventListener("click", redo);
+
+  bar.append(group(runB, stale, resetB), group(undoB, redoB), group(sel, fileMenu, file));
 
   runB.addEventListener("click", () => void run());
   resetB.addEventListener("click", () => void reset());
@@ -317,6 +322,11 @@ export function mountToolbar(bar: HTMLElement): void {
       e.preventDefault();
       navigate("canvas");
       fitCanvas();
+    } else if ((e.ctrlKey || e.metaKey) && !isTyping(e) && /^[zy]$/i.test(e.key)) {
+      // text fields keep their own undo
+      e.preventDefault();
+      if (e.key.toLowerCase() === "y" || e.shiftKey) redo();
+      else undo();
     }
   });
 
@@ -324,6 +334,8 @@ export function mountToolbar(bar: HTMLElement): void {
     const s = getState();
     stale.hidden = !isStale(s);
     runB.disabled = !s.case;
+    undoB.disabled = !canUndo();
+    redoB.disabled = !canRedo();
     if (s.case) {
       if (![...sel.options].some((o) => o.value === s.case!.name)) {
         const o = h("option", "", s.case.name);

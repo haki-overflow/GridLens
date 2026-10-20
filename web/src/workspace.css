@@ -50,7 +50,8 @@ button, input, select { font: inherit; color: inherit; }
 .tb-btn { height: 24px; min-width: 24px; padding: 0 8px; display: inline-flex;
   align-items: center; gap: 5px; background: transparent; border: 1px solid transparent;
   border-radius: var(--radius); cursor: pointer; white-space: nowrap; font-size: 12px; }
-.tb-btn:hover { background: var(--hover); border-color: var(--border); }
+.tb-btn:hover:not(:disabled) { background: var(--hover); border-color: var(--border); }
+.tb-btn:disabled { color: var(--muted); cursor: default; }
 .tb-btn.on { background: var(--sel); border-color: var(--accent); color: var(--sel-text); }
 .tb-btn.primary { background: var(--accent-strong); border-color: var(--accent);
   color: var(--accent-fg); font-weight: 600; }
@@ -238,7 +239,8 @@ pre.answer { background: var(--canvas); border: 1px solid var(--border); padding
 .notice b { color: var(--text); }
 
 /* --- one-line canvas ---------------------------------------------------------- */
-.canvas-wrap { position: absolute; inset: 0; background: var(--canvas); }
+.canvas-wrap { position: absolute; inset: 0; background: var(--canvas); user-select: none;
+  -webkit-user-select: none; }
 /* Semantic zoom: canvas.ts draws in screen pixels, so every size here is CSS px. */
 .canvas-wrap svg { width: 100%; height: 100%; display: block; cursor: grab;
   shape-rendering: geometricPrecision; text-rendering: geometricPrecision; }
@@ -303,10 +305,35 @@ pre.answer { background: var(--canvas); border: 1px solid var(--border); padding
 /* ---- diagram: outage view, names -------------------------------------------- */
 .branch.tripped { stroke: var(--red); stroke-dasharray: 8 5; }
 .trip-x { fill: var(--red); font-size: 16px; font-weight: 700; pointer-events: none; }
-.outage-chip { position: absolute; top: 6px; left: 8px; z-index: 2; padding: 2px 8px;
+.canvas-chips { position: absolute; top: 6px; left: 8px; z-index: 2; display: flex; flex-direction: column;
+  align-items: flex-start; gap: 4px; max-width: 46%; }
+.outage-chip { padding: 2px 8px;
   font-size: 11px; color: var(--red); background: var(--panel); border: 1px solid var(--red);
   cursor: pointer; }
+.canvas-warn { padding: 2px 8px; font-size: 11px; color: var(--amber); background: var(--panel);
+  border: 1px solid var(--amber-border); cursor: help; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; max-width: 100%; }
+.outage-chip[hidden], .canvas-warn[hidden] { display: none; }
 .bus-hit { cursor: move; }
+
+/* ---- drawing tools ------------------------------------------------------------ */
+.canvas-hint { position: absolute; left: 8px; bottom: 6px; z-index: 2; padding: 2px 8px; font-size: 11.5px;
+  color: var(--muted); background: var(--panel); border: 1px solid var(--border); pointer-events: none;
+  max-width: calc(100% - 16px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctool-group { display: flex; gap: 2px; }
+.ctool-group + .ctool-group { border-left: 1px solid var(--border); padding-left: 2px; }
+.ctool .k { margin-left: 5px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.ctool.on .k { color: var(--sel-text); }
+.rubber { stroke: var(--accent); stroke-width: 1.5px; stroke-dasharray: 6 4; pointer-events: none; }
+.trafo-sym { fill: var(--canvas); stroke: var(--text); stroke-width: 1.5px; pointer-events: none; }
+.trafo-sym.sel { stroke: var(--accent); }
+.sym-hit { fill: transparent; cursor: pointer; }
+.canvas-wrap:not([data-tool="select"]) .bus-hit { cursor: pointer; }
+.canvas-wrap[data-tool="bus"] svg, .canvas-wrap[data-tool="line"] svg,
+.canvas-wrap[data-tool="trafo"] svg { cursor: crosshair; }
+.canvas-wrap[data-tool="line"] .bus-hit, .canvas-wrap[data-tool="trafo"] .bus-hit { cursor: crosshair; }
+.canvas-wrap[data-tool="delete"] .bus-hit, .canvas-wrap[data-tool="delete"] .sym-hit,
+.canvas-wrap[data-tool="delete"] .branch.hit { cursor: not-allowed; }
 
 .props.stale .psol { opacity: .4; }
 

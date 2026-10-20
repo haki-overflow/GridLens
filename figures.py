@@ -321,7 +321,17 @@ def _layered(n, edges, types, width):
                    for i in rows[r]}
             rows[r].sort(key=lambda i: (key[i], i))
             place(rows[r])
-    return cx, np.array(row, float) * ROW_Y
+    # a very wide layer wraps onto extra rows, so big networks keep a readable
+    # aspect ratio (small networks have short layers and are unchanged)
+    k = max(8, int(np.ceil(1.6 * np.sqrt(n))))
+    cy, line = np.zeros(n), 0
+    for r in range(R):
+        for c in range(0, len(rows[r]), k):
+            chunk = rows[r][c:c + k]
+            place(chunk)
+            cy[chunk] = line * ROW_Y
+            line += 1
+    return cx, cy
 
 
 def _xy_columns(bus, n):

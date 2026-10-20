@@ -315,6 +315,9 @@ registerDoc("canvas", (el) => {
         .append("title").text(`${l.Kind === "trafo" ? "Transformer" : "Line"} ${l.From}-${l.To}`);
     });
 
+    // zoomed out on a big network, only bus numbers are written; names,
+    // voltages, angles and flows come back as you zoom in
+    const names = t.k >= 14, values = t.k >= 9;
     c.bus.forEach((b, i) => {
       const x = G.cx[i]!, y = G.cy[i]!, w = G.w[i]!;
       const xl = X(x - w / 2), xr = X(x + w / 2), yy = Y(y);
@@ -335,7 +338,7 @@ registerDoc("canvas", (el) => {
         gBus.append("circle").attr("class", "sym").attr("cx", sx).attr("cy", yy - 1.2 * u).attr("r", 0.3 * u);
         gText.append("text").attr("class", "sym-label").attr("x", sx).attr("y", yy - 1.2 * u)
           .attr("text-anchor", "middle").attr("dominant-baseline", "central").text("G");
-        gText.append("text").attr("class", "angle-label").attr("x", sx + 0.3 * u + 4).attr("y", yy - 1.2 * u)
+        if (names) gText.append("text").attr("class", "angle-label").attr("x", sx + 0.3 * u + 4).attr("y", yy - 1.2 * u)
           .attr("dominant-baseline", "central").text(`G${i + 1}`);
         gBus.append("circle").attr("class", "sym-hit").attr("data-hit", `gen:${i}`)
           .attr("cx", sx).attr("cy", yy - 1.05 * u).attr("r", Math.max(0.45 * u, 10))
@@ -346,7 +349,7 @@ registerDoc("canvas", (el) => {
         gBus.append("line").attr("class", "sym").attr("x1", lx).attr("x2", lx).attr("y1", yy).attr("y2", yy + 0.75 * u);
         gBus.append("path").attr("class", "sym-load")
           .attr("d", `M${lx - 0.17 * u},${yy + 0.75 * u}L${lx + 0.17 * u},${yy + 0.75 * u}L${lx},${yy + 1.02 * u}Z`);
-        gText.append("text").attr("class", "angle-label").attr("x", lx + 0.17 * u + 4).attr("y", yy + 0.9 * u)
+        if (names) gText.append("text").attr("class", "angle-label").attr("x", lx + 0.17 * u + 4).attr("y", yy + 0.9 * u)
           .attr("dominant-baseline", "central").text(`Load ${i + 1}`);
         gBus.append("rect").attr("class", "sym-hit").attr("data-hit", `load:${i}`)
           .attr("x", lx - Math.max(0.25 * u, 6)).attr("y", yy + 8)
@@ -354,14 +357,14 @@ registerDoc("canvas", (el) => {
           .append("title").text(`Load at bus ${i + 1}`);
       }
       gText.append("text").attr("class", "bus-label").attr("x", xl + 2).attr("y", yy - 7)
-        .text(Number.isFinite(v) ? `${i + 1}  ${v.toFixed(3)}` : `${i + 1}`);
-      if (s.view.angles && res) {
+        .text(Number.isFinite(v) && values ? `${i + 1}  ${v.toFixed(3)}` : `${i + 1}`);
+      if (s.view.angles && res && values) {
         gText.append("text").attr("class", "angle-label").attr("x", xl + 0.9 * u).attr("y", yy + 15)
           .text(`${Number(res["Angle (deg)"]).toFixed(2)}°`);
       }
     });
 
-    if (s.view.flows && fresh && flowRows) {
+    if (s.view.flows && fresh && flowRows && values) {
       G.routes.forEach((pts, k) => {
         if (!pts || (od && k === s.outage)) return;
         const f = flowRows[od && s.outage !== null && k > s.outage ? k - 1 : k] as Rec | undefined;

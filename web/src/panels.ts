@@ -1,6 +1,6 @@
 // Panels: project tree, properties, output.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, addBus, addLine, delBus, delLine, editBus, editLine, getState, isStale, navigateView, setState, subscribe, viewOf, type CaseData, type Rec, type Settings, type State } from "./app";
+import { VIEWS, addBus, clearMessages, addLine, delBus, delLine, editBus, editLine, getState, isStale, navigateView, setState, subscribe, viewOf, type CaseData, type Rec, type Settings, type State } from "./app";
 import { h } from "./ui";
 
 // ---- nav ---------------------------------------------------------------
@@ -317,7 +317,11 @@ export function mountOutput(tabs: HTMLElement, body: HTMLElement): void {
   const last = h("div", "out-last");
   const toggle = h("button", "out-toggle", "");
   toggle.type = "button";
-  tabs.append(title, last, toggle);
+  const clear = h("button", "out-toggle", "Clear");
+  clear.type = "button";
+  clear.title = "Empty the message log";
+  clear.addEventListener("click", (e) => { e.stopPropagation(); clearMessages(); });
+  tabs.append(title, last, clear, toggle);
   const apply = () => {
     root?.classList.toggle("out-collapsed", !open);
     toggle.textContent = open ? "Hide ▾" : "Show ▴";

@@ -200,7 +200,7 @@ const KEY = "gridlens.project";
 const fresh = (): State => ({
   case: null, results: null, solvedCase: null, solvedSig: null, selection: null, started: false, outage: null, conversion: null,
   openDocs: ["canvas"], activeDoc: "canvas",
-  view: { grid: true, flows: false, angles: false }, messages: [],
+  view: { grid: false, flows: false, angles: false }, messages: [],
   fileName: "untitled.gridlens.json",
 });
 

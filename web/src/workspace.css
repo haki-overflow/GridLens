@@ -478,3 +478,19 @@ dialog.newcase { width: min(520px, 94vw); padding: 16px 18px; }
 .out-tabs > button { flex: none; }
 .out-tabs .out-last { flex: 1 1 0; }
 .ws-centre { grid-template-columns: minmax(0, 1fr); }   /* wide content never widens the column */
+
+/* ---- v1.6: two-column results with small plots ---------------------------------- */
+.cols2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr); gap: 14px;
+  align-items: start; margin-top: 8px; }
+.cols2 > .col { min-width: 0; overflow-x: auto; }
+@media (max-width: 1250px) { .cols2 { grid-template-columns: minmax(0, 1fr); } }
+.minichart { margin-bottom: 10px; padding: 6px 6px 0; background: var(--canvas); border: 1px solid var(--border); }
+.minichart svg { width: 100%; height: auto; display: block; }
+.minichart .ctitle { fill: var(--text); font-size: 12px; font-weight: 600; }
+.minichart .bar { fill: var(--c1); }
+.minichart .bar.warn { fill: var(--amber); }
+.minichart .bar.bad { fill: var(--red); }
+.minichart .refline { stroke: var(--red); stroke-dasharray: 5 4; }
+.minichart .reflabel { fill: var(--red); font-size: 10px; }
+.minichart text { fill: var(--muted); font-size: 11px; }
+.minichart .axis text { fill: var(--muted); font-size: 10px; }

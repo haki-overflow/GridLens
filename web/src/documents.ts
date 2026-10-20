@@ -1,9 +1,9 @@
 // Documents: registry, study views, textbook wizard.
 // Sections follow the order of the files this one replaced; search for '// ----'.
 import { DEFAULT_SETTINGS, NEW_BUS, NEW_LINE, addBus, addLine, delBus, delLine, editBus, editLine, get, getState, isStale, log, navigate, post, report, setState, spareXY, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
-import { phasorDiagram, stackedPlot } from "./charts";
+import { barChart, phasorDiagram, stackedPlot } from "./charts";
 import { type DocDef } from "./shell";
-import { NEED_RUN, cards, csv, download, field, fmt, h, headline, matrix, notice, numIn, section, selectIn, subtabs, table, title, zip } from "./ui";
+import { NEED_RUN, cards, cols2, csv, download, field, fmt, h, headline, matrix, notice, numIn, section, selectIn, subtabs, table, title, zip } from "./ui";
 
 // ---- docs --------------------------------------------------------------
 
@@ -153,24 +153,34 @@ resultsDoc("load-flow", "Load flow results", "Bus voltages, generation, line flo
       ? table(viol.map((x) => ({ Element: `Bus ${x.Bus}`, "Value (pu)": x["V (pu)"],
           "Limit (pu)": n(x["V (pu)"]) < r.vmin ? r.vmin : r.vmax })))
       : headline("No violations", "ok"));
-    const [bus, br, prof] = subtabs(el, ["Bus report", "Branch report", "Profile"], "lf");
-    const busNo = r.res.map((x) => n(x.Bus));
-    prof!.append(stackedPlot(busNo, [
-      { yLabel: "|V| (pu)", digits: 3, series: [{ name: "|V|", y: V }],
-        hline: { y: r.vmin, label: `Vmin ${r.vmin}` } },
-      { yLabel: "Angle (deg)", digits: 2, series: [{ name: "Angle", y: r.res.map((x) => n(x["Angle (deg)"])) }] },
-    ], { xLabel: "Bus number" }));
-    bus!.append(table(r.res, { scale: { P_inj: r.base, Q_inj: r.base },
+    // bus table beside the voltage profile; branch flows (with loading) below
+    const [left, right] = cols2(el);
+    left.append(section("Bus results"));
+    right.append(barChart(r.res.map((x) => String(x.Bus)), V, {
+      title: "Voltage profile", yLabel: "|V| (pu)", digits: 4,
+      lines: [{ y: r.vmin, label: `Vmin ${r.vmin}` }, { y: r.vmax, label: `Vmax ${r.vmax}` }],
+      tone: (v) => (v < r.vmin || v > r.vmax ? "bad" : v < r.vmin + 0.02 || v > r.vmax - 0.02 ? "warn" : "") }));
+    right.append(barChart(r.res.map((x) => String(x.Bus)), r.res.map((x) => n(x["Angle (deg)"])), {
+      title: "Voltage angle", yLabel: "Angle (deg)", digits: 3 }));
+    const bus = left, br = h("div");
+    el.append(section("Branch flows"), br);
+    bus.append(table(r.res, { scale: { P_inj: r.base, Q_inj: r.base },
       rename: { P_inj: "P inj (MW)", Q_inj: "Q inj (MVAr)" },
       digits: { "Angle (deg)": 3, P_inj: 2, Q_inj: 2 },
       bad: (x) => n(x["V (pu)"]) < r.vmin || n(x["V (pu)"]) > r.vmax }));
     const s = r.base;
-    br!.append(table(r.flows, {
-      cols: ["From", "To", "P_ij", "Q_ij", "P_ji", "Q_ji", "Loss_P", "Loss_Q"],
+    const ld = r.loading ?? [];
+    const rated = ld.some((x) => n(x["Rate (MVA)"]) > 0);
+    const flows = r.flows.map((f, k) => ({ ...f, "S (MVA)": ld[k]?.["S (MVA)"],
+      ...(rated ? { "Loading (%)": ld[k]?.["Loading (%)"] } : {}) }));
+    br.append(table(flows, {
+      cols: ["From", "To", "P_ij", "Q_ij", "P_ji", "Q_ji", "Loss_P", "Loss_Q", "S (MVA)",
+        ...(rated ? ["Loading (%)"] : [])],
       scale: { P_ij: s, Q_ij: s, P_ji: s, Q_ji: s, Loss_P: s, Loss_Q: s },
       rename: { P_ij: "P from (MW)", Q_ij: "Q from (MVAr)", P_ji: "P to (MW)",
         Q_ji: "Q to (MVAr)", Loss_P: "Loss (MW)", Loss_Q: "Loss (MVAr)" },
-      digits: { P_ij: 2, Q_ij: 2, P_ji: 2, Q_ji: 2, Loss_P: 3, Loss_Q: 3 } }));
+      digits: { P_ij: 2, Q_ij: 2, P_ji: 2, Q_ji: 2, Loss_P: 3, Loss_Q: 3, "S (MVA)": 2, "Loading (%)": 1 },
+      bad: (x) => n(x["Loading (%)"]) > 100 }));
     if (r.qlog?.length) el.append(section("Generator Q limits: bus type switching"), table(r.qlog));
   });
 
@@ -179,7 +189,17 @@ resultsDoc("solver-check", "Do the 3 methods agree?", "The same case through all
   (el, r) => {
     const ok = r.cmp.every((x) => x.Converged);
     el.append(headline(ok ? "All three methods converge to the same answer."
-      : "Not every method converged.", ok ? "ok" : "bad"), table(r.cmp));
+      : "Not every method converged.", ok ? "ok" : "bad"));
+    const [left, right] = cols2(el);
+    left.append(table(r.cmp), h("p", "cap", `Main run: ${r.solved_with ?? r.method}.`),
+      ...((r.attempts ?? []).length > 1 ? [section("Attempts (automatic fallback)"), table(r.attempts)] : []));
+    right.append(barChart(r.cmp.map((x) => String(x.Method).replace("Newton-Raphson", "NR")
+      .replace("Fast Decoupled", "FD").replace("Gauss-Seidel", "GS")), r.cmp.map((x) => n(x.Iterations)), {
+      title: "Iterations to converge", yLabel: "Iterations", digits: 0, from: 0 }));
+    if (r.hist?.length > 1) {
+      right.append(barChart(r.hist.map((_, i) => String(i)), r.hist.map((x) => Math.log10(Math.max(x, 1e-16))), {
+        title: `Largest mismatch per iteration (log10), ${r.method}`, yLabel: "log10 mismatch", digits: 2 }));
+    }
   });
 
 // --------------------------------------------------------------- contingency
@@ -193,8 +213,16 @@ resultsDoc("contingency", "If a line fails (N-1)", "Each line removed in turn, c
         : `Worst outage: line ${w.Outage} → min |V| ${fmt(w["Min V (pu)"], 3)} pu at bus ${w["At bus"]}. ${bad.length} of ${r.n1.length} outages insecure.`,
       bad.length ? "bad" : "ok"));
     }
-    const tbl = table(r.n1, { bad: (x) => x.Status !== "OK" || n(x.Violations) > 0 });
-    const lines = (getState().case?.lines ?? []).map((l) => `${l.From}-${l.To}`);
+    const rated = r.n1.some((x) => n(x.Overloads) > 0);
+    const tbl = table(r.n1, { bad: (x) => x.Status !== "OK" || n(x.Violations) > 0 || n(x.Overloads) > 0,
+      cols: ["Outage", "Status", "Violations", "Min V (pu)", "At bus", "Loss (pu)", "Buses violating",
+        ...(rated ? ["Overloads", "Lines overloaded"] : [])] });
+    const seen: Record<string, number> = {};
+    const lines = (getState().case?.lines ?? []).map((l) => {   // the server's branch names
+      const key = `${l.From}-${l.To}`;
+      seen[key] = (seen[key] ?? 0) + 1;
+      return seen[key] === 1 ? key : `${key} (${seen[key]})`;
+    });
     Array.from(tbl.querySelectorAll("tr")).slice(1).forEach((tr, i) => {
       const k = lines.indexOf(String(r.n1[i]?.Outage));
       if (k < 0) return;
@@ -205,7 +233,23 @@ resultsDoc("contingency", "If a line fails (N-1)", "Each line removed in turn, c
         navigate("canvas");
       });
     });
-    el.append(h("p", "cap", "Click a row to show that outage on the diagram (the tripped line is dashed)."), tbl);
+    const ok = r.n1.filter((x) => x.Status === "OK");
+    const worst = [...ok].sort((a, b) => n(a["Min V (pu)"]) - n(b["Min V (pu)"])).slice(0, 24);
+    const [left, right] = cols2(el);
+    left.append(cards([
+      ["Outages studied", String(r.n1.length)],
+      ["Insecure", String(bad.length), "voltage limits or no solution", bad.length > 0],
+      ["No solution", String(r.n1.length - ok.length), "islanded or diverged", r.n1.length > ok.length],
+      ...(rated ? [["With overloads", String(r.n1.filter((x) => n(x.Overloads) > 0).length), "", true] as
+        [string, string, string, boolean]] : []),
+    ]), h("p", "cap", "Click a row below to show that outage on the diagram (the tripped line is dashed)."));
+    if (worst.length) {
+      right.append(barChart(worst.map((x) => String(x.Outage)), worst.map((x) => n(x["Min V (pu)"])), {
+        title: "Lowest voltage after each outage (worst first)", yLabel: "Min |V| (pu)", digits: 4,
+        lines: [{ y: r.vmin, label: `Vmin ${r.vmin}` }],
+        tone: (v) => (v < r.vmin ? "bad" : v < r.vmin + 0.02 ? "warn" : "") }));
+    }
+    el.append(section("All outages"), tbl);
   });
 
 // --------------------------------------------------------------- PV analysis
@@ -242,7 +286,8 @@ resultsDoc("pv-analysis", "How much more load? (PV curve)", "Loads and generatio
 apiDoc("fault-levels", "Quick short circuit (3-phase)", "Three-phase fault current at every bus from the Zbus.",
   (row, refresh) => {
     const xd = numIn(0.2), zf = numIn(0), kv = numIn(33);
-    row.append(field("Generator Xd'' (pu)", xd), field("Fault Zf (pu)", zf), field("Base kV", kv));
+    row.append(field("Generator Xd'' (pu)", xd), field("Fault Zf (pu)", zf),
+      field("Base kV (buses without one)", kv));
     for (const i of [xd, zf, kv]) i.addEventListener("change", refresh);
     return () => ({ xd: Number(xd.value), zf: Number(zf.value), kv: Number(kv.value) });
   },
@@ -251,9 +296,16 @@ apiDoc("fault-levels", "Quick short circuit (3-phase)", "Three-phase fault curre
     const top = [...t].sort((a, b) => n(b["Fault I (pu)"]) - n(a["Fault I (pu)"]))[0];
     if (top) {
       el.append(headline(`Highest fault level: bus ${top.Bus}, ${fmt(top["Fault I (pu)"], 2)} pu = ` +
-        `${fmt(top["Fault I (kA)"], 1)} kA at ${req.kv} kV (${fmt(top["Fault MVA"], 0)} MVA)`));
+        `${fmt(top["Fault I (kA)"], 1)} kA (${fmt(top["Fault MVA"], 0)} MVA)`));
     }
-    el.append(table(t));
+    const [left, right] = cols2(el);
+    left.append(table(t));
+    const hi = Math.max(...t.map((x) => n(x["Fault MVA"])));
+    right.append(barChart(t.map((x) => String(x.Bus)), t.map((x) => n(x["Fault MVA"])), {
+      title: "Fault level per bus", yLabel: "Fault MVA", digits: 0, from: 0,
+      tone: (v) => (v === hi ? "warn" : "") }),
+    barChart(t.map((x) => String(x.Bus)), t.map((x) => n(x["Fault I (kA)"])), {
+      title: `Fault current per bus (kA; base kV from each bus, else ${req.kv} kV)`, yLabel: "kA", digits: 2, from: 0 }));
   });
 
 // ----------------------------------------------------- unsymmetrical faults

@@ -134,6 +134,14 @@ export function title(el: HTMLElement, text: string, cap: string): void {
   el.append(hd, h("p", "cap", cap));
 }
 
+/** Two columns (main table left, plots right) that stack on narrow screens. */
+export function cols2(el: HTMLElement): [HTMLElement, HTMLElement] {
+  const box = h("div", "cols2"), a = h("div", "col"), b = h("div", "col");
+  box.append(a, b);
+  el.append(box);
+  return [a, b];
+}
+
 export function section(text: string): HTMLElement {
   return h("div", "sec", text);
 }

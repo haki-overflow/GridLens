@@ -51,6 +51,54 @@ export function lineChart(x: number[], series: Series[], o: {
   return wrap;
 }
 
+// ---- small bar chart (results pages: |V| per bus, fault MVA per bus) -------
+export function barChart(labels: string[], values: number[], o: {
+  yLabel: string; title: string; lines?: { y: number; label: string }[];
+  tone?: (v: number, i: number) => "" | "bad" | "warn"; digits?: number; from?: number;
+}): HTMLElement {
+  const long = labels.some((l) => l.length > 3);   // e.g. outage names "12-13": rotate them
+  const W = 420, H = long ? 256 : 240, m = { t: 26, r: 10, b: long ? 50 : 34, l: 52 };
+  const svg = d3.create("svg").attr("class", "chart bars").attr("viewBox", `0 0 ${W} ${H}`)
+    .attr("role", "img").attr("aria-label", o.title);
+  const fin = values.filter(Number.isFinite);
+  const refs = (o.lines ?? []).map((l) => l.y);
+  const lo = o.from ?? Math.min(...fin, ...refs), hi = Math.max(...fin, ...refs);
+  const pad = (hi - lo) * 0.08 || 0.01;
+  const ys = d3.scaleLinear().domain([o.from ?? lo - pad, hi + pad]).nice().range([H - m.b, m.t]);
+  const xs = d3.scaleBand().domain(labels).range([m.l, W - m.r]).padding(0.25);
+  svg.append("text").attr("class", "ctitle").attr("x", m.l).attr("y", 14).text(o.title);
+  svg.append("g").attr("class", "gridline").attr("transform", `translate(${m.l},0)`)
+    .call(d3.axisLeft(ys).ticks(5).tickSize(-(W - m.l - m.r)).tickFormat(() => ""))
+    .call((g) => g.select(".domain").remove());
+  const every = Math.ceil(labels.length / 24);
+  const xa = svg.append("g").attr("class", "axis").attr("transform", `translate(0,${H - m.b})`)
+    .call(d3.axisBottom(xs).tickValues(labels.filter((_, i) => i % every === 0)));
+  if (long) xa.selectAll("text").attr("transform", "rotate(-45)").attr("dx", "-0.4em")
+    .attr("dy", "0.3em").style("text-anchor", "end");
+  svg.append("g").attr("class", "axis").attr("transform", `translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(5));
+  svg.append("text").attr("transform", `translate(12,${(m.t + H - m.b) / 2}) rotate(-90)`)
+    .attr("text-anchor", "middle").text(o.yLabel);
+  const base = ys(Math.max(ys.domain()[0]!, 0) > 0 ? ys.domain()[0]! : Math.min(0, ys.domain()[1]!) || ys.domain()[0]!);
+  values.forEach((v, i) => {
+    if (!Number.isFinite(v)) return;
+    const y = ys(v), x = xs(labels[i]!)!;
+    const t = o.tone?.(v, i) ?? "";
+    svg.append("rect").attr("class", `bar ${t}`).attr("x", x).attr("width", xs.bandwidth())
+      .attr("y", Math.min(y, base)).attr("height", Math.max(Math.abs(base - y), 1))
+      .append("title").text(`${labels[i]}: ${v.toFixed(o.digits ?? 3)}`);
+  });
+  for (const l of o.lines ?? []) {
+    const y = ys(l.y);
+    svg.append("line").attr("class", "refline").attr("x1", m.l).attr("x2", W - m.r).attr("y1", y).attr("y2", y);
+    svg.append("text").attr("class", "reflabel").attr("x", W - m.r - 2).attr("y", y - 3)
+      .attr("text-anchor", "end").text(l.label);
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "minichart";
+  wrap.append(svg.node()!);
+  return wrap;
+}
+
 // ---- stacked panels, shared x axis, crosshair (PSCAD graph frame style) -----
 export interface PSeries { name: string; y: number[]; dim?: boolean; colour?: string }
 export interface Panel {

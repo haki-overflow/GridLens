@@ -77,7 +77,8 @@ export interface ViewDef {
 
 export const VIEWS: ViewDef[] = [
   { id: "network", label: "Network", hint: "Draw and edit your grid", needsRun: false,
-    subs: [{ id: "diagram", label: "Diagram", doc: "canvas" }] },
+    subs: [{ id: "diagram", label: "Diagram", doc: "canvas" },
+      { id: "tables", label: "Data tables", doc: "case-tables" }] },
   { id: "solve", label: "Solve", hint: "Run the load flow", needsRun: true,
     subs: [{ id: "results", label: "Results", doc: "load-flow" },
       { id: "methods", label: "Do the 3 methods agree?", doc: "solver-check" },
@@ -403,15 +404,19 @@ export const NEW_TRAFO: Rec = { R: 0, X: 0.1, B: 0, Tap: 1, Kind: "trafo" };
 
 const finite = (v: unknown) => v !== null && v !== "" && v !== undefined && Number.isFinite(Number(v));
 
+/** A diagram position right of the other buses when they all carry x, y
+ *  (so a new row keeps the drawing's positions), otherwise none. */
+export function spareXY(bus: Rec[]): Rec {
+  if (!bus.length || !bus.every((b) => finite(b.x) && finite(b.y))) return {};
+  const snap = (v: number) => Math.round(v * 2) / 2;
+  return { x: snap(Math.max(...bus.map((b) => Number(b.x)))) + 4.001,
+           y: snap(Math.max(...bus.map((b) => Number(b.y)))) + 0.001 };
+}
+
 /** Add a PQ bus (at diagram position `at`, or right of the others when they
  *  all carry x, y) and select it. */
 export function addBus(c: CaseData, at?: { x: number; y: number }, extra: Extra = {}): void {
-  const nb: Rec = { ...NEW_BUS };
-  if (at) Object.assign(nb, at);
-  else if (c.bus.length && c.bus.every((b) => finite(b.x) && finite(b.y))) {
-    nb.x = Math.max(...c.bus.map((b) => Number(b.x))) + 4.001;
-    nb.y = Math.max(...c.bus.map((b) => Number(b.y))) + 0.001;
-  }
+  const nb: Rec = { ...NEW_BUS, ...(at ?? spareXY(c.bus)) };
   setState({ case: { ...c, bus: [...c.bus, nb] }, selection: { kind: "bus", index: c.bus.length }, ...extra });
 }
 

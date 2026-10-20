@@ -13,10 +13,22 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-/** True when a key press goes to a text field, so shortcuts must ignore it. */
+/** True when a key press goes to a form field, so letter shortcuts must ignore it. */
 export function isTyping(e: Event): boolean {
   const t = e.target as HTMLElement | null;
+  if (t instanceof HTMLInputElement && t.readOnly) return false;
   return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+}
+
+/** True when Ctrl+Z should go to the field itself: it holds text typed since
+ *  it was drawn (its value differs from defaultValue). Otherwise the case
+ *  history is undone, also from a table cell the user has just tabbed into. */
+export function editingText(e: Event): boolean {
+  const t = e.target as HTMLElement | null;
+  if (!t) return false;
+  if (t instanceof HTMLTextAreaElement || t.isContentEditable) return true;
+  if (!(t instanceof HTMLInputElement) || t.readOnly || t.type === "checkbox") return false;
+  return t.value !== t.defaultValue;
 }
 
 // ---- ui ----------------------------------------------------------------

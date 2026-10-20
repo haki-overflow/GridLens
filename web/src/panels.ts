@@ -77,7 +77,7 @@ function numInput(value: unknown, commit: (v: number) => void, digits = 4): HTML
   const i = h("input");
   i.type = "text";
   i.inputMode = "decimal";
-  i.value = typeof value === "number" ? String(+value.toFixed(digits)) : "";
+  i.defaultValue = typeof value === "number" ? String(+value.toFixed(digits)) : "";
   i.addEventListener("change", () => {
     const v = Number(i.value.trim());
     if (i.value.trim() === "" || !Number.isFinite(v)) {
@@ -86,6 +86,7 @@ function numInput(value: unknown, commit: (v: number) => void, digits = 4): HTML
       return;
     }
     i.classList.remove("bad");
+    i.defaultValue = i.value;
     commit(v);
   });
   return i;

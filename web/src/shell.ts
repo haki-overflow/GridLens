@@ -3,7 +3,7 @@
 import { VIEWS, canRedo, canUndo, exportProject, navigateView, viewOf, getState, importProject, isStale, loadPreset, navigate, presets, redo, report, reset, run, setState, subscribe, undo, type State } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
-import { ICON, h, isTyping } from "./ui";
+import { ICON, editingText, h } from "./ui";
 
 // ---- shell -------------------------------------------------------------
 
@@ -322,8 +322,8 @@ export function mountToolbar(bar: HTMLElement): void {
       e.preventDefault();
       navigate("canvas");
       fitCanvas();
-    } else if ((e.ctrlKey || e.metaKey) && !isTyping(e) && /^[zy]$/i.test(e.key)) {
-      // text fields keep their own undo
+    } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !editingText(e) && /^[zy]$/i.test(e.key)) {
+      // a field with freshly typed text keeps its own undo
       e.preventDefault();
       if (e.key.toLowerCase() === "y" || e.shiftKey) redo();
       else undo();

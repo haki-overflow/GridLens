@@ -1,6 +1,6 @@
 // Documents: registry, study views, textbook wizard.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { DEFAULT_SETTINGS, get, getState, isStale, log, navigate, post, report, setState, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
+import { DEFAULT_SETTINGS, NEW_BUS, NEW_LINE, addBus, addLine, delBus, delLine, editBus, editLine, get, getState, isStale, log, navigate, post, report, setState, spareXY, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
 import { phasorDiagram, stackedPlot } from "./charts";
 import { type DocDef } from "./shell";
 import { NEED_RUN, cards, csv, download, field, fmt, h, headline, matrix, notice, numIn, section, selectIn, subtabs, table, title, zip } from "./ui";
@@ -12,6 +12,7 @@ import { NEED_RUN, cards, csv, download, field, fmt, h, headline, matrix, notice
 
 export const DOC_TITLES: Record<string, string> = {
   canvas: "Network diagram",
+  "case-tables": "Data tables",
   "load-flow": "Load flow results",
   "solver-check": "Do the 3 methods agree?",
   contingency: "If a line fails (N-1)",
@@ -547,46 +548,133 @@ calcDoc("dispatch", "Economic dispatch", "Least-cost generation at equal increme
     p2!.append(table(d.its as Rec[], { maxHeight: 480 }));
   });
 
-// ---- small editable table (dispatch units, sequence data) ---------------
+// ---- small editable table (case tables, dispatch units, sequence data) ---
 
-/** Edits `rows` in place; numbers stay numbers, text stays text. */
-function rowEditor(rows: Rec[], cols: string[], onChange: () => void, addable = false): HTMLElement {
+export interface RowEditorOpts {
+  addable?: boolean; // "+ Add row" and a delete button per row
+  index?: boolean; // a leading read-only "#" column
+  name?: string; // data-t on every cell, so callers can mark bad cells
+  select?: Record<string, string[]>; // columns edited with a <select>
+  numeric?: string[]; // number columns (default: guessed from the values)
+  cell?: (row: number, col: string, value: unknown) => void; // instead of writing rows[row][col]
+  onAdd?: () => void; // instead of copying the last row
+  onDelete?: (row: number) => void; // instead of splicing the row out
+  onPaste?: (row: number, col: number, block: string[][]) => void; // col -1 = the "#" cell
+}
+
+const show = (v: unknown) => v === null || v === undefined ? ""
+  : typeof v === "number" ? String(+v.toPrecision(12)) : String(v);
+
+/** A block copied from Excel (tabs) or a PDF / CSV (commas, or spaces) as rows of cells. */
+export function parseBlock(text: string): string[][] {
+  const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  const sep = lines.some((l) => l.includes("\t")) ? /\t/ : lines.some((l) => l.includes(",")) ? /\s*,\s*/ : /\s+/;
+  return lines.map((l) => l.split(sep).map((x) => x.trim()));
+}
+
+/** Without `cell`, edits `rows` in place: numbers stay numbers, text stays
+ *  text. With `numeric`, an empty cell becomes null and a non-number is kept
+ *  as typed so the server's validation can name it. */
+function rowEditor(rows: Rec[], cols: string[], onChange: () => void, o: RowEditorOpts = {}): HTMLElement {
   const wrap = h("div", "wz-table");
+  const isNum = (c: string, v: unknown) => !o.select?.[c] && (o.numeric ? o.numeric.includes(c) : typeof v !== "string");
+  const write = (i: number, c: string, v: unknown) => {
+    if (o.cell) o.cell(i, c, v);
+    else {
+      rows[i]![c] = v;
+      onChange();
+    }
+  };
+  const tag = (el: HTMLElement, i: number, c: string) => {
+    el.dataset.r = String(i);
+    el.dataset.c = c;
+    if (o.name) el.dataset.t = o.name;
+  };
+  const paste = (e: ClipboardEvent, i: number, ci: number) => {
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!o.onPaste || (!/[\t\n]/.test(text.trim()) && text.split(",").length < 3)) return; // one value: normal paste
+    e.preventDefault();
+    o.onPaste(i, ci, parseBlock(text));
+  };
   const draw = () => {
     const tb = h("table", "grid");
-    tb.append(Object.assign(h("tr"), {}));
     const head = h("tr");
-    head.append(...cols.map((c) => h("th", "", c)), ...(addable ? [h("th", "", "")] : []));
+    head.append(...(o.index ? [h("th", "", "#")] : []), ...cols.map((c) => h("th", "", c)),
+      ...(o.addable ? [h("th", "", "")] : []));
     tb.replaceChildren(head);
     rows.forEach((r, i) => {
       const tr = h("tr");
-      for (const c of cols) {
+      if (o.index) {
+        const idx = h("input", "idx");
+        idx.readOnly = true;
+        idx.defaultValue = String(i + 1);
+        idx.title = "Paste a block here to fill the rows from this one";
+        tag(idx, i, "#");
+        idx.addEventListener("paste", (e) => paste(e, i, -1));
         const td = h("td", "s");
-        const cur = r[c];
-        const inp = h("input");
-        inp.value = String(cur ?? "");
-        inp.style.width = typeof cur === "string" ? "92px" : "70px";
-        inp.addEventListener("change", () => {
-          if (typeof cur === "string") r[c] = inp.value;
-          else if (Number.isFinite(Number(inp.value))) r[c] = Number(inp.value);
-          else { inp.classList.add("bad"); return; }
-          onChange();
-        });
-        td.append(inp);
+        td.append(idx);
         tr.append(td);
       }
-      if (addable) {
-        const del = h("button", "btn", "×");
-        del.addEventListener("click", () => { rows.splice(i, 1); draw(); onChange(); });
-        tr.append(h("td", "")); tr.lastElementChild!.append(del);
+      cols.forEach((c, ci) => {
+        const td = h("td", "s");
+        const cur = r[c];
+        const opts = o.select?.[c];
+        let inp: HTMLInputElement | HTMLSelectElement;
+        if (opts) {
+          const s = h("select");
+          const val = cur === undefined || cur === null || cur === "" ? opts[0]! : String(cur);
+          for (const x of opts.includes(val) ? opts : [...opts, val]) s.append(new Option(x, x, false, x === val));
+          s.addEventListener("change", () => write(i, c, s.value));
+          inp = s;
+        } else {
+          const t = h("input");
+          t.defaultValue = show(cur);
+          t.style.width = isNum(c, cur) ? "70px" : "92px";
+          t.addEventListener("change", () => {
+            const raw = t.value.trim();
+            t.defaultValue = t.value; // committed: Ctrl+Z now undoes the case
+            if (!isNum(c, cur)) return write(i, c, t.value);
+            if (raw === "" && o.numeric) return write(i, c, null);
+            if (raw !== "" && Number.isFinite(Number(raw))) {
+              t.classList.remove("bad");
+              return write(i, c, Number(raw));
+            }
+            if (o.numeric) return write(i, c, raw);
+            t.classList.add("bad");
+          });
+          inp = t;
+        }
+        tag(inp, i, c);
+        inp.addEventListener("paste", (e) => paste(e as ClipboardEvent, i, ci));
+        td.append(inp);
+        tr.append(td);
+      });
+      if (o.addable) {
+        const del = h("button", "btn rowdel", "×");
+        del.type = "button";
+        del.title = `Delete row ${i + 1}`;
+        del.setAttribute("aria-label", `Delete row ${i + 1}`);
+        del.addEventListener("click", () => {
+          if (o.onDelete) return o.onDelete(i);
+          rows.splice(i, 1);
+          draw();
+          onChange();
+        });
+        const td = h("td", "");
+        td.append(del);
+        tr.append(td);
       }
       tb.append(tr);
     });
     wrap.replaceChildren(tb);
-    if (addable) {
+    if (o.addable) {
       const add = h("button", "btn", "+ Add row");
+      add.type = "button";
       add.addEventListener("click", () => {
-        rows.push({ ...(rows[rows.length - 1] ?? {}) }); draw(); onChange();
+        if (o.onAdd) return o.onAdd();
+        rows.push({ ...(rows[rows.length - 1] ?? {}) });
+        draw();
+        onChange();
       });
       wrap.append(add);
     }
@@ -594,6 +682,179 @@ function rowEditor(rows: Rec[], cols: string[], onChange: () => void, addable = 
   draw();
   return wrap;
 }
+
+// ---- case tables ---------------------------------------------------------
+
+// Network > Data tables: the bus and line tables of the case, like the
+// Streamlit Problem input. Every edit goes through the shared case actions
+// (one undo step each), so the diagram follows at once and the other way
+// round. Bad cells are marked from the prep_case messages of /api/validate.
+
+const BUS_TYPES = ["Slack", "PV", "PQ"];
+const LINE_KINDS = ["line", "trafo"];
+const LINE_COLS = ["From", "To", "R", "X", "B", "Tap", "Kind"];
+const busCols = (c: CaseData) => ["Type", "V", "Pg", "Qg", "Pd", "Qd", "Bs", "kV",
+  ...(c.settings.qlim ? ["Qmin", "Qmax"] : [])];
+
+const normType = (s: string) => /^(sl|sw|ref|3$)/i.test(s) ? "Slack" : /^(pv|gen|2$)/i.test(s) ? "PV"
+  : /^(pq|load|[01]$)/i.test(s) ? "PQ" : s;
+const normKind = (s: string) => (/^(t|x)/i.test(s) ? "trafo" : /^l/i.test(s) || s === "" ? "line" : s);
+
+/** A pasted cell as stored: Type / Kind words normalised, numbers as numbers,
+ *  anything else kept as typed (validation names it). */
+function pasteValue(col: string, raw: string): unknown {
+  if (col === "Type") return normType(raw);
+  if (col === "Kind") return normKind(raw);
+  const t = raw.replace(/[−–]/g, "-");
+  if (t === "") return null;
+  return Number.isFinite(Number(t)) ? Number(t) : raw;
+}
+
+const isNumText = (s: string) => s !== "" && Number.isFinite(Number(s.replace(/[−–]/g, "-")));
+
+/** prep_case messages -> bad cells ("bus:<row>:<col>" -> message). */
+function cellMarks(problems: string[], c: CaseData): Map<string, string> {
+  const m = new Map<string, string>();
+  const put = (t: string, r: number, col: string, msg: string) => m.set(`${t}:${r}:${col}`, msg);
+  const rows = (s: string) => s.split(",").map((x) => Number(x.trim()) - 1).filter((x) => x >= 0);
+  for (const p of problems) {
+    let g: RegExpExecArray | null;
+    if ((g = /^Bus row (\d+): column (\w+) is not a number/.exec(p))) put("bus", Number(g[1]) - 1, g[2]!, p);
+    else if ((g = /^Line row (\d+): column (\w+) is not a number/.exec(p))) put("line", Number(g[1]) - 1, g[2]!, p);
+    else if ((g = /^Bus Type must be .*\(row\(s\) ([\d, ]+)\)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "Type", p));
+    else if ((g = /^Line (From|To) must be whole .*\(rows ([\d, ]+)\)/.exec(p))) rows(g[2]!).forEach((r) => put("line", r, g![1]!, p));
+    else if ((g = /^More than one Slack bus \(buses ([\d, ]+)\)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "Type", p));
+    else if (p.startsWith("Lines reference buses that do not exist")) {
+      for (const x of p.matchAll(/row (\d+): (From|To) =/g)) put("line", Number(x[1]) - 1, x[2]!, p);
+    } else if (p.startsWith("Series reactance X must be greater than 0")) {
+      c.lines.forEach((l, r) => { if (Number.isFinite(Number(l.X)) && Number(l.X) <= 0) put("line", r, "X", p); });
+    } else if ((g = /cannot reach buses ([\d, ]+)/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "#", p));
+  }
+  return m;
+}
+
+registerDoc("case-tables", (el) => {
+  title(el, "Data tables", "Bus and line data in per unit. Edit any cell, add or delete rows, or paste a block "
+    + "copied from Excel or a textbook PDF into a cell to fill the rows from there. The diagram follows at once.");
+  const probs = h("div", "tbl-probs");
+  const busBox = h("div"), lineBox = h("div");
+  const foot = h("p", "cap");
+  const wiz = h("button", "btn", "Enter textbook data...");
+  wiz.type = "button";
+  wiz.addEventListener("click", () => void openWizard());
+  foot.append("Data in MVA, kV and ohms? ", wiz);
+  el.append(probs, section("Buses"), busBox, section("Lines and transformers"), lineBox, foot);
+
+  let shown: CaseData | null = null;
+  let writing = false; // a cell edit from this table: keep the DOM (and the focus)
+  let marks = new Map<string, string>();
+  let checked: CaseData | null = null;
+  let timer = 0, token = 0;
+  const cur = () => getState().case!;
+  const act = (fn: () => void, keep = false) => {
+    writing = keep;
+    try { fn(); } finally { writing = false; }
+  };
+
+  const applyMarks = () => {
+    for (const inp of el.querySelectorAll<HTMLElement>("[data-t]")) {
+      const why = marks.get(`${inp.dataset.t}:${inp.dataset.r}:${inp.dataset.c}`);
+      inp.classList.toggle("bad", !!why);
+      if (why) inp.title = why;
+      else if (inp.dataset.c !== "#") inp.removeAttribute("title");
+    }
+  };
+
+  const pasteRows = (t: "bus" | "line", i: number, ci: number, block: string[][]) => {
+    const c = cur();
+    const cols = t === "bus" ? busCols(c) : LINE_COLS;
+    let grid = block;
+    if (grid.length && !grid[0]!.some(isNumText)) grid = grid.slice(1); // a header row
+    let start = Math.max(ci, 0);
+    if (ci < 0 && grid.length) {
+      // pasted on "#": drop a leading row-number column (1, 2, 3, ...)
+      const first = grid.map((r) => Number(r[0]));
+      if (first.every((v, k) => Number.isInteger(v) && v === first[0]! + k) && grid.every((r) => r.length > 1)) {
+        grid = grid.map((r) => r.slice(1));
+      }
+      start = 0;
+    }
+    const rows = (t === "bus" ? c.bus : c.lines).map((r) => ({ ...r }));
+    grid.forEach((cells, j) => {
+      const k = i + j;
+      if (k >= rows.length) {
+        rows.push(t === "bus" ? { ...NEW_BUS, ...spareXY(rows) }
+          : { From: 1, To: Math.min(2, Math.max(c.bus.length, 1)), ...NEW_LINE });
+      }
+      cells.forEach((raw, m) => {
+        const col = cols[start + m];
+        if (col) rows[k]![col] = pasteValue(col, raw);
+      });
+    });
+    setState({ case: t === "bus" ? { ...c, bus: rows } : { ...c, lines: rows }, outage: null });
+    log("info", `Pasted ${grid.length} row(s) into the ${t === "bus" ? "bus" : "line"} table from row ${i + 1}.`);
+  };
+
+  const build = (c: CaseData) => {
+    const f = document.activeElement as HTMLElement | null;
+    const at = f && el.contains(f) ? [f.dataset.t, f.dataset.r, f.dataset.c] : null;
+    const bcols = busCols(c);
+    busBox.replaceChildren(rowEditor(c.bus, bcols, () => {}, {
+      index: true, addable: true, name: "bus", select: { Type: BUS_TYPES }, numeric: bcols.slice(1),
+      cell: (i, col, v) => act(() => editBus(cur(), i, { [col]: v }), true),
+      onAdd: () => act(() => addBus(cur())),
+      onDelete: (i) => act(() => delBus(cur(), i)),
+      onPaste: (i, ci, b) => act(() => pasteRows("bus", i, ci, b)),
+    }));
+    lineBox.replaceChildren(rowEditor(c.lines, LINE_COLS, () => {}, {
+      index: true, addable: true, name: "line", select: { Kind: LINE_KINDS }, numeric: LINE_COLS.slice(0, 6),
+      cell: (i, col, v) => act(() => editLine(cur(), i, { [col]: v }), true),
+      onAdd: () => act(() => addLine(cur())),
+      onDelete: (i) => act(() => delLine(cur(), i)),
+      onPaste: (i, ci, b) => act(() => pasteRows("line", i, ci, b)),
+    }));
+    applyMarks();
+    if (at) el.querySelector<HTMLElement>(`[data-t="${at[0]}"][data-r="${at[1]}"][data-c="${at[2]}"]`)?.focus();
+  };
+
+  const validate = (c: CaseData) => {
+    clearTimeout(timer);
+    timer = window.setTimeout(async () => {
+      const my = ++token;
+      try {
+        const r = await post<{ problems: string[]; notes: string[] }>("/api/validate", c);
+        if (my !== token) return;
+        checked = c;
+        marks = cellMarks(r.problems, c);
+        applyMarks();
+        probs.replaceChildren(...(r.problems.length || r.notes.length
+          ? [...r.problems.map((p) => h("div", "msg error", p)), ...r.notes.map((n) => h("div", "msg warn", n))]
+          : [h("div", "msg ok", "No problems found. Press Run (F5) to solve.")]));
+      } catch (e) {
+        report(e, "Checking the tables");
+      }
+    }, 250);
+  };
+
+  const paint = (s: State) => {
+    if (s.case !== shown) {
+      const prev = shown;
+      shown = s.case;
+      if (!s.case) {
+        busBox.replaceChildren();
+        lineBox.replaceChildren();
+        notice(probs, "No case loaded.");
+        return;
+      }
+      const sameShape = !!prev && prev.bus.length === s.case.bus.length && prev.lines.length === s.case.lines.length
+        && prev.settings.qlim === s.case.settings.qlim;
+      if (!(writing && sameShape)) build(s.case);
+    }
+    if (s.case && s.activeDoc === "case-tables" && checked !== s.case) validate(s.case);
+  };
+  subscribe(paint);
+  paint(getState());
+});
 
 // ---- wizard ------------------------------------------------------------
 

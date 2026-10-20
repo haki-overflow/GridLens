@@ -37,7 +37,9 @@ export function buildShell(app: HTMLElement): Shell {
   const root = h("div", "ws");
   const title = h("header", "ws-title");
   const readouts = h("div", "read");
-  title.append(h("div", "brand", "GRIDLENS"), readouts);
+  const brand = h("div", "brand", "GRIDLENS");
+  brand.append(h("span", "ver", " v1.6"));
+  title.append(brand, readouts);
   const tools = h("nav", "ws-tools");
   tools.setAttribute("aria-label", "Toolbar");
   const busy = h("div", "ws-busy");

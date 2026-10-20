@@ -449,3 +449,5 @@ pre.answer.wrap { white-space: pre-wrap; }
 .wz-table .rowdel { height: 22px; padding: 0 8px; }
 .wz-table .rowdel:hover { border-color: var(--red); color: var(--red); }
 .wz-table > .btn { margin-top: 6px; }
+
+.ws-title .brand .ver { font-weight: 400; letter-spacing: .04em; color: var(--muted); font-size: 11px; }

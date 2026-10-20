@@ -99,12 +99,18 @@ def prep_case(bus_df, lines_df, cfg):
     l["From"] = l["From"].round().astype(int)
     l["To"] = l["To"].round().astype(int)
 
+    islands = _islands(n, l)
     slacks = [i + 1 for i, t in enumerate(b["Type"]) if t == "Slack"]
     if not slacks:
         probs.append("No Slack bus: set exactly one bus Type to Slack.")
-    elif len(slacks) > 1:
+    elif len(islands) == 1 and len(slacks) > 1:
         probs.append("More than one Slack bus (buses " +
                      ", ".join(map(str, slacks)) + "); exactly one required.")
+    for isl in islands if len(islands) > 1 else []:
+        sl = [i + 1 for i in isl if b["Type"].iloc[i] == "Slack"]
+        if len(sl) > 1:
+            probs.append(f"Island with buses {_list(isl)} has more than one Slack bus "
+                         f"({', '.join(map(str, sl))}); exactly one per island.")
     out_of_range = []
     for c in ("From", "To"):
         out_of_range.extend(
@@ -119,24 +125,46 @@ def prep_case(bus_df, lines_df, cfg):
         probs.append("Series reactance X must be greater than 0 (lines " +
                      ", ".join(zero_x) + ").")
 
-    adj = [[] for _ in range(n)]
-    for f, t in zip(l["From"].to_numpy(dtype=int), l["To"].to_numpy(dtype=int)):
-        if 1 <= f <= n and 1 <= t <= n:
-            adj[f - 1].append(t - 1)
-            adj[t - 1].append(f - 1)
-    seen, todo = {0}, [0]
-    while todo:
-        for nb in adj[todo.pop()]:
-            if nb not in seen:
-                seen.add(nb)
-                todo.append(nb)
-    if n > 1 and len(seen) < n:
-        lost = ", ".join(str(x + 1) for x in sorted(set(range(n)) - seen))
-        probs.append(f"Network is disconnected: bus 1 cannot reach buses {lost}.")
+    if slacks and len(islands) > 1:
+        dead = [isl for isl in islands if not any(b["Type"].iloc[i] == "Slack" for i in isl)]
+        for isl in dead:
+            probs.append(f"Network is disconnected: buses {_list(isl)} have no path to a "
+                         "Slack bus. Connect them, or make one of them the Slack bus "
+                         "of its own island.")
+        if not dead:
+            notes.append(f"The network has {len(islands)} islands ("
+                         + "; ".join(f"buses {_list(isl)}" for isl in islands)
+                         + "); each is solved with its own Slack bus.")
     if not len(l):
         probs.append("There are no lines: add at least one line between two "
                      "buses.")
     return b, l, probs, notes
+
+
+def _islands(n, l):
+    """Groups of bus indices joined by in-service branches (to valid buses)."""
+    adj = [[] for _ in range(n)]
+    on = l["InService"] if "InService" in l else [1] * len(l)
+    for f, t, s in zip(l["From"].to_numpy(dtype=int), l["To"].to_numpy(dtype=int), on):
+        if s and 1 <= f <= n and 1 <= t <= n:
+            adj[f - 1].append(t - 1)
+            adj[t - 1].append(f - 1)
+    left, out = set(range(n)), []
+    while left:
+        start = min(left)
+        seen, todo = {start}, [start]
+        while todo:
+            for nb in adj[todo.pop()]:
+                if nb not in seen:
+                    seen.add(nb)
+                    todo.append(nb)
+        out.append(sorted(seen))
+        left -= seen
+    return out
+
+
+def _list(isl):
+    return ", ".join(str(i + 1) for i in isl)
 
 
 def _on(v):
@@ -223,7 +251,14 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False):
 
 
 def outage(b, l, k):
-    """Re-solve the case with line k removed: (res, flows, ok, hist)."""
+    """Re-solve the case with line k removed: (res, flows, ok, hist). Raises a
+    plain-language ValueError when the outage cuts buses off from every Slack."""
+    rest = l.drop(l.index[k]).reset_index(drop=True)
+    for isl in _islands(len(b), rest):
+        if not any(b["Type"].iloc[i] == "Slack" for i in isl):
+            raise ValueError(f"taking line {int(l['From'].iloc[k])}-{int(l['To'].iloc[k])} "
+                             f"out cuts buses {_list(isl)} off from every Slack bus "
+                             "(they lose supply), so there is no load flow to show.")
     return _outage(b, l, k)
 
 # ============================================================================

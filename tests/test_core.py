@@ -79,7 +79,8 @@ def test_problem_disconnected():
     keep = ~(((L5["From"] == 4) & (L5["To"] == 5)) |
              ((L5["From"] == 2) & (L5["To"] == 5)))
     assert _probs(B5, L5[keep].reset_index(drop=True)) == [
-        "Network is disconnected: bus 1 cannot reach buses 5."]
+        "Network is disconnected: buses 5 have no path to a Slack bus. Connect them, "
+        "or make one of them the Slack bus of its own island."]
 
 
 def test_problem_no_lines_yet():

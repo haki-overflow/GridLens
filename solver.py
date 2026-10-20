@@ -134,7 +134,7 @@ def solve_loadflow(bus, lines, method="Newton-Raphson", tol=1e-8, init="flat",
     shortens each Newton-Raphson step (for hard cases)."""
     n = len(bus)
     t = bus["Type"].values
-    if (t == "Slack").sum() != 1:
+    if (t == "Slack").sum() < 1:  # one per island; gridcore.prep_case checks islands
         raise ValueError("Exactly one Slack bus is required.")
     if not lines[["From", "To"]].isin(range(1, n + 1)).all().all():
         raise ValueError("Line From/To must be bus numbers 1..N.")

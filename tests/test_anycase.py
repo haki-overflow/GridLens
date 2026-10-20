@@ -122,3 +122,48 @@ def test_gauss_seidel_honours_tol():
     nr = solve_loadflow(B5, L5)[0]
     gs = solve_loadflow(B5, L5, "Gauss-Seidel", 1e-10)[0]
     assert np.allclose(nr["V (pu)"], gs["V (pu)"], atol=1e-8)
+
+
+# ------------------------------------------------------------------ step 2: islands
+def _two_islands():
+    """5-bus demo plus a separate 2-bus island (buses 6-7) with its own slack."""
+    extra_b = pd.DataFrame({"Type": ["Slack", "PQ"], "V": [1.02, 1.0], "Pg": [0.0, 0.0],
+                            "Qg": [0.0, 0.0], "Pd": [0.0, 0.3], "Qd": [0.0, 0.1], "Bs": [0.0, 0.0]})
+    extra_l = pd.DataFrame([dict(From=6, To=7, R=0.02, X=0.08, B=0.02, Tap=1.0)])
+    return (pd.concat([B5, extra_b], ignore_index=True),
+            pd.concat([L5, extra_l], ignore_index=True), extra_b, extra_l)
+
+
+def test_each_island_with_a_slack_is_solved_on_its_own():
+    bus, lines, eb, el = _two_islands()
+    b, l, probs, notes = _prep(bus, lines)
+    assert probs == []
+    assert any("2 islands" in n for n in notes)
+    out = gridcore.run_study(b, l, "Newton-Raphson", 1e-8, 100.0, 0.95, 1.1)
+    assert out["ok"]
+    main, *_ = solve_loadflow(B5, L5)
+    small, *_ = solve_loadflow(eb, el.assign(From=1, To=2))
+    assert np.allclose(out["res"]["V (pu)"].iloc[:5], main["V (pu)"], atol=1e-8)
+    assert np.allclose(out["res"]["V (pu)"].iloc[5:], small["V (pu)"], atol=1e-8)
+    assert np.allclose(out["res"]["Angle (deg)"].iloc[5:], small["Angle (deg)"], atol=1e-6)
+
+
+def test_island_without_a_slack_is_reported_by_name():
+    bus, lines, *_ = _two_islands()
+    bus.loc[5, "Type"] = "PQ"
+    probs = _prep(bus, lines)[2]
+    assert probs == ["Network is disconnected: buses 6, 7 have no path to a Slack bus. "
+                     "Connect them, or make one of them the Slack bus of its own island."]
+
+
+def test_two_slacks_in_one_island_are_still_a_problem():
+    bus, lines, *_ = _two_islands()
+    bus.loc[1, "Type"] = "Slack"
+    assert _prep(bus, lines)[2] == ["Island with buses 1, 2, 3, 4, 5 has more than one "
+                                    "Slack bus (1, 2); exactly one per island."]
+
+
+def test_out_of_service_line_can_split_the_network():
+    lines = L5.assign(InService=[1, 1, 1, 1, 0, 1, 0])   # 2-5 and 4-5 out: bus 5 alone
+    probs = _prep(B5, lines)[2]
+    assert probs and probs[0].startswith("Network is disconnected: buses 5 ")

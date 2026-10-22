@@ -501,3 +501,12 @@ dialog.newcase { width: min(520px, 94vw); padding: 16px 18px; }
   border: 1px solid var(--axis); cursor: pointer; white-space: nowrap; }
 .part-chip:hover { border-color: var(--muted); }
 .part-chip[hidden] { display: none; }
+
+/* ---- v2.7: diagram tools and chips share the top row, so a long warning never
+   covers the tools; on a narrow canvas the chips wrap below the tools ---------- */
+.canvas-top { position: absolute; top: 6px; left: 8px; right: 8px; z-index: 2; display: flex;
+  flex-direction: row-reverse; flex-wrap: wrap; align-items: flex-start; gap: 4px; pointer-events: none; }
+.canvas-top .canvas-tools { position: static; max-width: 100%; pointer-events: auto; }
+.canvas-top .canvas-chips { position: static; flex: 1 1 220px; min-width: 0; max-width: none;
+  pointer-events: none; }
+.canvas-top .canvas-chips > * { pointer-events: auto; }

@@ -462,12 +462,17 @@ const finite = (v: unknown) => v !== null && v !== "" && v !== undefined && Numb
 export function spareXY(bus: Rec[]): Rec {
   if (!bus.length || !bus.every((b) => finite(b.x) && finite(b.y))) return {};
   const snap = (v: number) => Math.round(v * 2) / 2;
-  return { x: snap(Math.max(...bus.map((b) => Number(b.x)))) + 4.001,
-           y: snap(Math.max(...bus.map((b) => Number(b.y)))) + 0.001 };
+  const xs = bus.map((b) => Number(b.x)), ys = bus.map((b) => Number(b.y));
+  const low = Math.max(...ys);
+  const row = xs.filter((_, i) => ys[i]! > low - 1);   // the lowest row
+  // 8 units right of that row's last bus (room for its bar, up to ~6 units with
+  // a generator, and the new one's 3); four to a row, then a new row 5 units down
+  return row.length < 4 ? { x: snap(Math.max(...row)) + 8.001, y: snap(low) + 0.001 }
+    : { x: snap(Math.min(...xs)) + 0.001, y: snap(low) + 5.001 };
 }
 
-/** Add a PQ bus (at diagram position `at`, or right of the others when they
- *  all carry x, y) and select it. */
+/** Add a PQ bus (at diagram position `at`, or at a free spot by the others
+ *  when they all carry x, y: spareXY) and select it. */
 export function addBus(c: CaseData, at?: { x: number; y: number }, extra: Extra = {}): void {
   const nb: Rec = { ...NEW_BUS, ...(at ?? spareXY(c.bus)) };
   setState({ case: { ...c, bus: [...c.bus, nb] }, selection: { kind: "bus", index: c.bus.length }, ...extra });

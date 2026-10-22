@@ -122,6 +122,20 @@ function editSettings(c: CaseData, patch: Partial<Settings>): void {
  *  from (the panel is not rebuilt while a field has focus). */
 const cur = (c: CaseData): CaseData => getState().case ?? c;
 
+/** "+ Add bus" and "+ Add line", on every Properties page (a line added from a
+ *  bus's page starts at that bus). */
+function addActs(c: CaseData, from = 1): HTMLElement {
+  const acts = h("div", "pacts");
+  const to = from < c.bus.length ? from + 1 : Math.max(1, from - 1);
+  acts.append(actionBtn("+ Add bus", () => {
+    const now = cur(c);
+    addBus(now);
+    window.dispatchEvent(new CustomEvent("gl:reveal", { detail: now.bus.length }));   // the new bus
+  }),
+    actionBtn("+ Add line", () => addLine(cur(c), from, to)));
+  return acts;
+}
+
 function actionBtn(label: string, fn: () => void, danger = false): HTMLElement {
   const b = h("button", `pbtn${danger ? " danger" : ""}`, label);
   b.type = "button";
@@ -164,9 +178,7 @@ function projectPanel(c: CaseData): HTMLElement {
     row("Initial guess", labelledSelect([["flat", "Flat (1∠0°)"], ["setpoint", "Set-points"]],
       st.init ?? "flat", (v) => editSettings(cur(c), { init: v }))),
     row("Auto fallback", checkInput(st.fallback ?? true, (v) => editSettings(cur(c), { fallback: v }))));
-  const acts = h("div", "pacts");
-  acts.append(actionBtn("+ Add bus", () => addBus(cur(c))), actionBtn("+ Add line", () => addLine(cur(c))));
-  box.append(g1, g2, g3, acts, h("div", "empty", "Pick a bus or line above, or click it on the diagram, to edit it."));
+  box.append(g1, g2, g3, addActs(c), h("div", "empty", "Pick a bus or line above, or click it on the diagram, to edit it."));
   return box;
 }
 
@@ -186,7 +198,7 @@ function busPanel(c: CaseData, i: number, s: State): HTMLElement {
   box.append(g);
   const acts = h("div", "pacts");
   acts.append(actionBtn(`Delete bus ${i + 1}`, () => delBus(cur(c), i), true));
-  box.append(acts);
+  box.append(acts, addActs(c, i + 1));
   if (c.settings.qlim) {
     const [gq, bq] = group("Generator limits");
     bq.append(row("Q min", numInput(b.Qmin, ed("Qmin")), "pu"), row("Q max", numInput(b.Qmax, ed("Qmax")), "pu"));
@@ -223,7 +235,7 @@ function linePanel(c: CaseData, i: number, s: State): HTMLElement {
   box.append(g);
   const acts = h("div", "pacts");
   acts.append(actionBtn(`Delete line ${l.From}-${l.To}`, () => delLine(cur(c), i), true));
-  box.append(acts);
+  box.append(acts, addActs(c));
   const r = s.results && !isStale(s) ? s.results : null;
   const f = r?.flows[i] as Rec | undefined;
   if (f && r) {

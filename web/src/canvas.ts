@@ -213,7 +213,9 @@ registerDoc("canvas", (el) => {
   chips.append(chip, warn);
   const hint = h("div", "canvas-hint");
   hint.setAttribute("aria-live", "polite");
-  wrap.append(tools, chips, hint, part);
+  const top = h("div", "canvas-top");   // tools on the right, chips left of them (or below)
+  top.append(tools, chips);
+  wrap.append(top, hint, part);
 
   function setTool(id: Tool): void {
     tool = id;
@@ -233,10 +235,8 @@ registerDoc("canvas", (el) => {
   /** Fit the whole drawing in the window. With `readable`, a network too big
    *  to read when fitted opens at reading size (READ_K) around its Slack bus
    *  instead; the user zooms out (wheel) or presses Fit to see all of it. */
-  const fit = (animate = true, readable = false): boolean => {
-    const c = getState().case;
-    const box = wrap.getBoundingClientRect();
-    if (!c || !c.bus.length || box.width < 10 || box.height < 10) return false;
+  /** The view of the whole drawing: its scale k and transform z. */
+  const whole = (c: CaseData, box: DOMRect) => {
     const g = geo(c, null);
     const xs = g.cx.flatMap((x, i) => [x - g.w[i]! / 2, x + g.w[i]! / 2]);
     const x0 = Math.min(...xs) - 1.5, x1 = Math.max(...xs) + 1.5;
@@ -244,8 +244,18 @@ registerDoc("canvas", (el) => {
     const top = 44, bottom = 34;   // the tool bar and the hint line sit over the diagram
     const hgt = Math.max(box.height - top - bottom, 40);
     const k = Math.min(box.width / (x1 - x0), hgt / (y1 - y0), 40);
-    let z = d3.zoomIdentity.translate(box.width / 2, top + hgt / 2).scale(k)
+    const z = d3.zoomIdentity.translate(box.width / 2, top + hgt / 2).scale(k)
       .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+    return { g, x0, x1, y0, y1, top, hgt, k, z };
+  };
+
+  const fit = (animate = true, readable = false): boolean => {
+    const c = getState().case;
+    const box = wrap.getBoundingClientRect();
+    if (!c || !c.bus.length || box.width < 10 || box.height < 10) return false;
+    const view = whole(c, box);
+    const { g, x0, x1, y0, y1, top, hgt, k } = view;
+    let z = view.z;
     if (readable && k < NAMES_K) {
       // around the Slack bus, the window kept inside the drawing (no empty margin)
       const i = Math.max(c.bus.findIndex((b) => b.Type === "Slack"), 0);
@@ -265,6 +275,20 @@ registerDoc("canvas", (el) => {
     if (needFit && fit(false, true)) needFit = false;
   };
   window.addEventListener("gl:fit", () => fit());
+
+  /** Bring bus i into view (one just added from the Properties panel): the
+   *  whole drawing when it still fits at a readable size, else centred on it. */
+  window.addEventListener("gl:reveal", (e) => {
+    const c = getState().case, i = (e as CustomEvent<number>).detail;
+    const box = wrap.getBoundingClientRect();
+    if (!c || !c.bus[i] || box.width < 10 || box.height < 10) return;
+    const g = geo(c, null);
+    const x = t.applyX(g.cx[i]!), y = t.applyY(g.cy[i]!), half = g.w[i]! / 2 * t.k;
+    if (x - half > 8 && x + half < box.width - 8 && y > 70 && y < box.height - 40) return;  // in view
+    if (whole(c, box).k >= NAMES_K) fit();
+    else svg.transition().duration(120).call(zoom.transform as never,
+      d3.zoomIdentity.translate(box.width / 2, box.height / 2).scale(t.k).translate(-g.cx[i]!, -g.cy[i]!));
+  });
   new ResizeObserver(fitIfNeeded).observe(wrap);
 
   /** Grid lines stay 1px: the pattern tile is sized in screen pixels. */

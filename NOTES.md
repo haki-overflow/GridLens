@@ -77,16 +77,18 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   A design workflow prototyped lean-Newton / factorisation-reuse / screen+parallel options in
   the scratchpad (n1/); its benchmark decides v2.9.
 
-- In flight (2026-10-22): workflow "design-fast-n1" (run wf_f00bdf11-0fb) prototypes three fast
-  N-1 designs in /tmp/claude-0/-home-user/71fb2b95-b5a7-467b-9f6a-90820ae02f15/scratchpad/n1/
-  (lean/, reuse/, screen/: proto.py each; bench.py and reference.pkl = full reference N-1 of
-  case2383wp), benchmarks them on all 2,896 outages and judges them. If the result is lost,
-  re-read those files (or rerun the bench) before redesigning. Its results (one line per agent: the
-  three prototype reports, the benchmark table, three judges) are in
-  /root/.claude/projects/-home-user/71fb2b95-b5a7-467b-9f6a-90820ae02f15/subagents/workflows/wf_f00bdf11-0fb/journal.jsonl
-  (read the "result" lines; if the run is still going, wait or rerun bench.py). Plan after it: v2.8 background
-  jobs (in-process threads, POST /api/jobs, GET /api/jobs/{id} progress, DELETE cancel; web polls
-  and shows progress instead of a frozen Run), then v2.9 the winning fast N-1.
+- The first run of workflow "design-fast-n1" (wf_f00bdf11-0fb) died with /clear before any
+  result: a workflow only resumes in the session that launched it. Never /clear while one runs.
+- In flight (2026-10-22, session a5b7a850): "design-fast-n1" rerun wf_314ef0c9-14f, agents at
+  effort max (the user asked for ultracode / max). Scratch:
+  /tmp/claude-0/-home-user/a5b7a850-f9b9-4e44-bf19-1dc1368ade9e/scratchpad/n1/ (lean/, reuse/,
+  screen/ prototypes, lean_old/ and reuse_old/ from the first run, ref.py -> reference.pkl and
+  reference_qlim.pkl = the exact N-1 of case2383wp, bench.py, final/proto.py = the merged winner,
+  verify1/, verify2/). Results: "result" lines of
+  /root/.claude/projects/-home-user/a5b7a850-f9b9-4e44-bf19-1dc1368ade9e/subagents/workflows/wf_314ef0c9-14f/journal.jsonl
+  (prototypes, benchmark, three judges, synthesis with a v2.9 integration plan, two verifiers).
+  If lost, re-read those files or rerun bench.py on final/proto.py before redesigning.
+- Plan: v2.8 background jobs (in progress), then v2.9 the winning fast N-1.
 
 ## Next: Phase 2, studies and jobs (docs/design-v2.md; one version bump per change, v2.7 on)
 Gate: all 2,896 branch outages of case2383wp in under 2 min; IEC TR 60909-4 examples match.

@@ -185,7 +185,7 @@ Results: `res` has `Bus`, `V (pu)`, `Angle (deg)`, `P_inj`, `Q_inj`; `flows` has
 - Generator Q limits (optional) apply to the main load flow, N-1 and the P-V curve (since v2.5); the solver check compares the methods without them.
 - The Streamlit app (`app.py`) keeps its v1.5 features; New case, actual units, file import and the new tables are in the web workspace only.
 - Sequence networks are reactance-only and Δ-Y transformer phase shifts (30°) are not modelled.
-- Since v2.1 Newton-Raphson is sparse with the analytical Jacobian: case2383wp (2,383 buses) solves in about 50 ms (Fast Decoupled, sparse since v2.2, in about 35 ms; the DC load flow in about 10 ms). The full study is still slow on big cases, because N-1 and the P-V curve re-solve once per outage and per step, and the 3-method check runs dense Gauss-Seidel. Phase 2 of docs/design-v2.md moves these to background jobs.
+- Since v2.1 Newton-Raphson is sparse with the analytical Jacobian: case2383wp (2,383 buses) solves in about 50 ms (Fast Decoupled, sparse since v2.2, in about 35 ms; the DC load flow in about 10 ms). The full study is still slow on big cases, because N-1 and the P-V curve re-solve once per outage and per step (Gauss-Seidel, a teaching method, is not run above 30 buses since v2.7). Phase 2 of docs/design-v2.md moves these to background jobs.
 
 ## License and credits
 

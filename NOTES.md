@@ -79,9 +79,7 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
 ## Next: Phase 2, studies and jobs (docs/design-v2.md; one version bump per change, v2.7 on)
 Gate: all 2,896 branch outages of case2383wp in under 2 min; IEC TR 60909-4 examples match.
 Suggested order:
-1. Teaching methods only where they make sense: run_study's 3-method check runs dense
-   Gauss-Seidel (case300: 5000 sweeps, 18 s, no convergence); skip GS above ~30 buses (say so in
-   the table) and hide Show working above 30 buses (design "fix on the way").
+1. (done in v2.7) Teaching methods only up to 30 buses: Gauss-Seidel and Show working.
 2. Jobs: long studies (N-1, P-V) as background jobs with progress and cancel (API job endpoints,
    polling or WebSocket; web progress bar instead of a frozen Run). Layout progress too.
 3. Fast N-1: DC screening with PTDF / LODF from solver.dc_model, then AC (studies.outage) only for

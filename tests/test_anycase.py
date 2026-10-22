@@ -447,3 +447,17 @@ def test_show_working_is_for_small_cases():
     assert "Z" not in fault and len(fault["table"]) == 39          # no dense Zbus
     demo = client.get("/api/case/5-bus (demo)").json()
     assert "Z" in client.post("/api/fault", json={"case": demo}).json()
+
+
+def test_gauss_seidel_is_not_used_above_the_teaching_size():
+    c, client = _case39(), TestClient(app)
+    c["settings"]["method"] = "Gauss-Seidel"
+    r = client.post("/api/study", json=c)                       # refused as the chosen method
+    assert r.status_code == 422 and "Gauss-Seidel is a teaching method" in r.json()["problems"][0]
+    r = client.post("/api/ybus", json=c)                        # Show working refuses first
+    assert r.status_code == 422 and "Show working is for cases up to 30 buses" in r.json()["problems"][0]
+    b, l, *_ = gridcore.prep_case(pd.DataFrame(c["bus"]), pd.DataFrame(c["lines"]),
+                                  dict(CFG, base=c["settings"]["base"]))
+    heavy = b.assign(Pd=b["Pd"] * 6, Qd=b["Qd"] * 6)            # no method converges
+    attempts = gridcore.loadflow(heavy, l, "Newton-Raphson", 1e-8)[6]
+    assert [a["Method"] for a in attempts] == ["Newton-Raphson"] * 3 + ["Fast Decoupled"]

@@ -225,10 +225,16 @@ def _try(b, l, method, tol, qlim, init, damp):
 def loadflow(b, l, method, tol, qlim=False, init="flat", fallback=True):
     """The main load flow. The chosen method and start are tried first (so a
     case that converges gives exactly what solve_loadflow gives); if it does
-    not converge and fallback is on, ATTEMPTS are tried in turn. Returns
+    not converge and fallback is on, ATTEMPTS are tried in turn (without
+    Gauss-Seidel above TEACH_MAX buses, where it is refused as the method). Returns
     (res, flows, ok, hist, b_lf, qlog, attempts, hint); attempts lists every
     try, hint explains a failure in plain words."""
-    plan = [(method, init, 1.0)] + ([a for a in ATTEMPTS if a != (method, init, 1.0)]
+    big = len(b) > TEACH_MAX     # Gauss-Seidel is for teaching-size cases only
+    if method == "Gauss-Seidel" and big:
+        raise ValueError(f"Gauss-Seidel is a teaching method, used on cases up to {TEACH_MAX} buses; "
+                         f"this one has {len(b)}. Choose Newton-Raphson or Fast Decoupled.")
+    plan = [(method, init, 1.0)] + ([a for a in ATTEMPTS if a != (method, init, 1.0)
+                                     and not (big and a[0] == "Gauss-Seidel")]
                                     if fallback else [])
     attempts, first = [], None
     for m, start, damp in plan:

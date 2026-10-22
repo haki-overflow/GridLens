@@ -105,7 +105,9 @@ function apiDoc(id: string, heading: string, cap: string,
       const s = getState();
       if (!s.solvedCase || !bodyFn) return;
       const my = ++token;
-      if (TEACHING.has(id) && s.solvedCase.bus.length > TEACH_MAX) {
+      const big = TEACHING.has(id) && s.solvedCase.bus.length > TEACH_MAX;
+      row.hidden = big;   // the method / α inputs do nothing on a case this size
+      if (big) {
         body.replaceChildren(h("p", "cap", `Show working is for cases up to ${TEACH_MAX} buses; this one has `
           + `${s.solvedCase.bus.length}. The matrices and step-by-step tables would be too big to read; `
           + "the results pages have every number."));

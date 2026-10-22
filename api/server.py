@@ -32,7 +32,7 @@ from .schema import complex_in, frame, to_json
 
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
-app = FastAPI(title="GridLens API", version="2.6",
+app = FastAPI(title="GridLens API", version="2.7",
               description="Load flow, N-1, faults and textbook tools as JSON.")
 
 
@@ -278,8 +278,10 @@ def fault(body: FaultIn):
     tbl, Z, V0, If = _guard(lambda: fault_analysis(
         b, l, res, body.xd, body.zf, body.case.settings.base,
         body.kv if np.all(kv == body.kv) else kv), "Fault analysis")
-    return {"table": to_json(tbl), "Z": to_json(Z), "V0": to_json(V0),
-            "If": to_json(If)}
+    out = {"table": to_json(tbl), "V0": to_json(V0), "If": to_json(If)}
+    if len(b) <= W.TEACH_MAX:     # the dense Zbus only where someone could read it
+        out["Z"] = to_json(Z)
+    return out
 
 
 @app.post("/api/seqfault")
@@ -302,9 +304,18 @@ def seqfault(body: SeqFaultIn):
             "branches": to_json(br), "kv": to_json(kv)}
 
 
+def _teaching_size(b):
+    """Show working builds dense matrices and step-by-step tables: small cases only."""
+    if len(b) > W.TEACH_MAX:
+        raise Problems([f"Show working is for cases up to {W.TEACH_MAX} buses; this one has "
+                        f"{len(b)}. The matrices and step-by-step tables would be too big to "
+                        "read; the results pages have every number."])
+
+
 @app.post("/api/ybus")
 def ybus(case: Case):
     _, l, _, _, _, _, b_lf, _ = _loadflow(case)
+    _teaching_size(b_lf)
     parts = _guard(lambda: W.ybus_parts(b_lf, l), "Ybus")
     return {"parts": to_json(parts), "Y": to_json(build_ybus(len(b_lf), l, b_lf))}
 
@@ -312,6 +323,7 @@ def ybus(case: Case):
 @app.post("/api/iterations")
 def iterations(body: IterIn):
     _, l, _, _, _, _, b_lf, _ = _loadflow(body.case)
+    _teaching_size(b_lf)
     method = body.method or body.case.settings.method
     tol = body.tol or (1e-6 if method == "Gauss-Seidel" else 1e-8)
 
@@ -329,6 +341,7 @@ def iterations(body: IterIn):
 @app.post("/api/answer")
 def answer(body: AnswerIn):
     _, l, res, flows, _, _, b_lf, _ = _loadflow(body.case)
+    _teaching_size(b_lf)
     s = body.case.settings
     conv = None if body.conversion is None else \
         {k: frame(v) for k, v in body.conversion.items()}

@@ -15,6 +15,8 @@ import pandas as pd
 
 from solver import branch_y, build_ybus, in_service
 
+TEACH_MAX = 30   # buses: Show working and Gauss-Seidel are for cases up to this size
+
 
 def _setup(bus):
     t = bus["Type"].values

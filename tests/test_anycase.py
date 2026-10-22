@@ -412,3 +412,38 @@ def test_api_outage_shows_the_buses_cut_off():
     out = TestClient(app).post("/api/outage/7", json=case).json()
     assert out["ok"] and out["cut_off"] == [6] and out["lost_load"] == pytest.approx(25.0)
     assert out["res"][5]["V (pu)"] == 0.0
+
+
+# ------------------------------------------------ v2.7: teaching methods, small cases
+from pathlib import Path  # noqa: E402
+from working import TEACH_MAX  # noqa: E402
+
+
+def _case39():
+    text = (Path(__file__).parent / "data" / "case39.m").read_text()
+    return TestClient(app).post("/api/import", json={"filename": "case39.m", "text": text}).json()
+
+
+def test_method_check_skips_gauss_seidel_above_the_teaching_size():
+    c = _case39()
+    assert len(c["bus"]) > TEACH_MAX
+    b, l, probs, _ = gridcore.prep_case(pd.DataFrame(c["bus"]), pd.DataFrame(c["lines"]),
+                                        dict(CFG, base=c["settings"]["base"]))
+    cmp = gridcore.run_study(b, l, "Newton-Raphson", 1e-8, 100.0, 0.95, 1.1)["cmp"]
+    gs = cmp.set_index("Method").loc["Gauss-Seidel"]
+    assert gs["Converged"] is None and "teaching method" in gs["Note"]
+    assert cmp["Converged"].iloc[:2].tolist() == [True, True]
+    small = gridcore.run_study(*_prep(B5, L5)[:2], "Newton-Raphson", 1e-8, 100.0, 0.95, 1.1)["cmp"]
+    assert "Note" not in small and small["Converged"].tolist() == [True] * 3
+
+
+def test_show_working_is_for_small_cases():
+    c, client = _case39(), TestClient(app)
+    for path, body in (("/api/ybus", c), ("/api/iterations", {"case": c}),
+                       ("/api/answer", {"case": c})):
+        r = client.post(path, json=body)
+        assert r.status_code == 422 and "up to 30 buses" in r.json()["problems"][0]
+    fault = client.post("/api/fault", json={"case": c}).json()
+    assert "Z" not in fault and len(fault["table"]) == 39          # no dense Zbus
+    demo = client.get("/api/case/5-bus (demo)").json()
+    assert "Z" in client.post("/api/fault", json={"case": demo}).json()

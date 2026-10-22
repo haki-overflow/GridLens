@@ -75,6 +75,9 @@ export interface ViewDef {
   subs: SubView[];
 }
 
+/** Show working and Gauss-Seidel are for teaching-size cases (the API refuses bigger ones). */
+export const TEACH_MAX = 30;
+
 export const VIEWS: ViewDef[] = [
   { id: "network", label: "Network", hint: "Draw it, or fill in the tables", needsRun: false,
     subs: [{ id: "diagram", label: "Diagram", doc: "canvas" },

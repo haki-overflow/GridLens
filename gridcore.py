@@ -16,6 +16,7 @@ from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
 from studies import branch_names, contingency, pv_curve
 from topics import case_to_pu
+from working import TEACH_MAX
 from studies import outage as _outage
 
 
@@ -302,18 +303,26 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
     res, flows, ok, hist, b_lf, qlog, attempts, hint = loadflow(
         b, l, method, tol, qlim, init, fallback)
     used = next((a for a in attempts if a["Converged"]), attempts[0])
-    rows = []
+    rows, notes = [], []
     for m in METHODS:
+        if m == "Gauss-Seidel" and len(b) > TEACH_MAX:
+            rows.append([m, None, None, None, None])
+            notes.append(f"not run: a teaching method, used up to {TEACH_MAX} buses")
+            continue
         try:
             r2, f2, ok2, h2 = solve_loadflow(b, l, m)
-        except np.linalg.LinAlgError:   # e.g. Fast Decoupled with a line of X = 0
+        except np.linalg.LinAlgError as e:   # e.g. Fast Decoupled with a line of X = 0
             rows.append([m, False, None, None, None])
+            notes.append(str(e))
             continue
         rows.append([m, ok2, len(h2) - 1,
                      round(f2["Loss_P"].sum() * base, 4),
                      round(r2["V (pu)"].min(), 4)])
+        notes.append("")
     cmp_df = pd.DataFrame(rows, columns=["Method", "Converged", "Iterations",
                                          "Loss (MW)", "Min V (pu)"])
+    if any(notes):
+        cmp_df["Note"] = notes
     n1 = contingency(b, l, vmin, vmax, base, qlim)
     loading = line_loading(flows, l, base)
     n1_text = n1 if (n1["Overloads"].fillna(0) > 0).any() else \

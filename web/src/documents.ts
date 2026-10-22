@@ -1,6 +1,6 @@
 // Documents: registry, study views, textbook wizard.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { DEFAULT_SETTINGS, NEW_BUS, NEW_LINE, addBus, addLine, delBus, delLine, editBus, editLine, get, getState, isStale, log, navigate, post, report, setState, spareXY, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
+import { DEFAULT_SETTINGS, NEW_BUS, NEW_LINE, TEACH_MAX, addBus, addLine, delBus, delLine, editBus, editLine, get, getState, isStale, log, navigate, post, report, setState, spareXY, subscribe, type CaseData, type Rec, type State, type Study } from "./app";
 import { barChart, phasorDiagram, stackedPlot } from "./charts";
 import { type DocDef } from "./shell";
 import { NEED_RUN, cards, cols2, csv, download, field, fmt, h, headline, matrix, notice, numIn, section, selectIn, subtabs, table, title, zip } from "./ui";
@@ -87,6 +87,8 @@ function resultsDoc(id: string, heading: string, cap: string, paint: Paint): voi
 
 /** A document that calls its own endpoint on the solved case. inputs()
  *  builds the input row and returns a function giving the request body. */
+const TEACHING = new Set(["ybus", "iterations", "answer"]); // Show working: small cases only
+
 function apiDoc(id: string, heading: string, cap: string,
   inputs: (row: HTMLElement, refresh: () => void, c: CaseData) => () => Rec,
   path: string, paint: (body: HTMLElement, data: Rec, c: CaseData, req: Rec) => void,
@@ -103,6 +105,12 @@ function apiDoc(id: string, heading: string, cap: string,
       const s = getState();
       if (!s.solvedCase || !bodyFn) return;
       const my = ++token;
+      if (TEACHING.has(id) && s.solvedCase.bus.length > TEACH_MAX) {
+        body.replaceChildren(h("p", "cap", `Show working is for cases up to ${TEACH_MAX} buses; this one has `
+          + `${s.solvedCase.bus.length}. The matrices and step-by-step tables would be too big to read; `
+          + "the results pages have every number."));
+        return;
+      }
       const req = bodyFn();
       const sent = wrap ? { case: caseBody(s.solvedCase), ...req } : caseBody(s.solvedCase);
       try {
@@ -187,9 +195,12 @@ resultsDoc("load-flow", "Load flow results", "Bus voltages, generation, line flo
 // -------------------------------------------------------------- solver check
 resultsDoc("solver-check", "Do the 3 methods agree?", "The same case through all three load-flow methods.",
   (el, r) => {
-    const ok = r.cmp.every((x) => x.Converged);
-    el.append(headline(ok ? "All three methods converge to the same answer."
-      : "Not every method converged.", ok ? "ok" : "bad"));
+    const ran = r.cmp.filter((x) => x.Converged !== null);   // Gauss-Seidel is not run on big cases
+    const ok = ran.every((x) => x.Converged);
+    el.append(headline(!ok ? "Not every method converged."
+      : ran.length === r.cmp.length ? "All three methods converge to the same answer."
+        : `${ran.map((x) => x.Method).join(" and ")} converge to the same answer (Gauss-Seidel, a teaching `
+          + `method, runs on cases up to ${TEACH_MAX} buses).`, ok ? "ok" : "bad"));
     const [left, right] = cols2(el);
     left.append(table(r.cmp), h("p", "cap", `Main run: ${r.solved_with ?? r.method}.`),
       ...((r.attempts ?? []).length > 1 ? [section("Attempts (automatic fallback)"), table(r.attempts)] : []));

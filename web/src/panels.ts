@@ -1,6 +1,6 @@
 // Panels: project tree, properties, output.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, addBus, clearMessages, addLine, delBus, delLine, editBus, editLine, getState, isStale, navigateView, setState, subscribe, viewOf, type CaseData, type Rec, type Settings, type State } from "./app";
+import { TEACH_MAX, VIEWS, addBus, clearMessages, addLine, delBus, delLine, editBus, editLine, getState, isStale, navigateView, setState, subscribe, viewOf, type CaseData, type Rec, type Settings, type State } from "./app";
 import { h } from "./ui";
 
 // ---- nav ---------------------------------------------------------------
@@ -19,6 +19,7 @@ export function mountNav(el: HTMLElement): void {
 
   const mark = (s: State, v: (typeof VIEWS)[number]): [string, string] => {
     if (!v.needsRun) return ["", ""];
+    if (v.id === "working" && (s.case?.bus.length ?? 0) > TEACH_MAX) return [`Up to ${TEACH_MAX} buses`, "locked"];
     if (!s.results) return ["Run first", "locked"];
     return isStale(s) ? ["Out of date", "stale"] : ["Ready", "ok"];
   };

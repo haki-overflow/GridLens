@@ -1,4 +1,4 @@
-# Notes for the next session (v2.6: phase 1 done)
+# Notes for the next session (v2.7: phase 2 started)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -67,6 +67,12 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   suite: tests/test_reference.py, ten MATPOWER cases (case9 ... case2383wp, .m files in
   tests/data) against tests/data/reference_pf.json (PYPOWER runpf / rundcpf; tools/reference_pf.py,
   dev tool only). All match to round-off; gate passed (case2383wp NR 0.07 s). 196 tests pass.
+
+- v2.7: teaching size TEACH_MAX = 30 buses (GS skipped in the method check, Show working refused,
+  no dense Zbus in /api/fault above it). 198 tests. Review workflow ran on the diff (fixes follow).
+- Fast N-1 baseline: 50 ms per outage on case2383wp (all 2,896 ~145 s), 70% SuperLU factorisation.
+  A design workflow prototyped lean-Newton / factorisation-reuse / screen+parallel options in
+  the scratchpad (n1/); its benchmark decides v2.9.
 
 ## Next: Phase 2, studies and jobs (docs/design-v2.md; one version bump per change, v2.7 on)
 Gate: all 2,896 branch outages of case2383wp in under 2 min; IEC TR 60909-4 examples match.

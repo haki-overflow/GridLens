@@ -15,9 +15,11 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   old snapshot within 1e-9; put the largest difference in the commit message and tell the user.
   Per-iteration mismatches (hist) can move more when the old method was less exact (v2.1: 2.1e-9,
   the old numerical Jacobian; the new value matched the analytical trace to 6e-15): say so.
-  Phase 1 is done, so ask again before regenerating in phase 2. A planned change that moves
-  results on purpose (v2.5: the IEEE 14 7-8 N-1 row) was regenerated after a diff showing only
-  the intended rows changed, and reported; confirm that practice with the user too.
+  Intended changes (user, 2026-10-22, standing): regenerate the snapshots without asking when a
+  change moves results on purpose, after a diff shows only the intended values changed; say
+  exactly what changed in the commit message and the TL;DR (as in v2.5, the IEEE 14 7-8 row).
+- tools/reference_pf.py (PYPOWER, dev tool only, not a dependency) stays: user OK 2026-10-22.
+- The user wants short TL;DRs as work progresses.
 - If context gets above ~85%, update this file and tell the user to /clear.
 
 ## State

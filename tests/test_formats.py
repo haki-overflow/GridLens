@@ -176,3 +176,12 @@ def test_small_networks_keep_the_layered_drawing():
     edges = [(int(a) - 1, int(b) - 1) for a, b in zip(lines["From"], lines["To"])]
     g = figures.layout(5, edges, bus)
     assert sorted(set(np.round(g["cy"], 6))) == [0.0, 5.0, 10.0]   # rows by distance from the slack
+
+
+def test_matpower_case300_imports_with_its_series_capacitor():
+    # v2.3: negative X is accepted (case300 has one series capacitor, X = -0.3697 pu)
+    case = _mp("case300")
+    b, l, probs, _ = gridcore.prep_case(case["bus"], case["lines"], dict(CFG, base=case["base"]))
+    assert probs == [] and (l["X"] < 0).sum() == 1
+    res, flows, ok, hist = gridcore.loadflow(b, l, "Newton-Raphson", 1e-10)[:4]
+    assert ok and len(hist) - 1 <= 6

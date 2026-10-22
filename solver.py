@@ -162,7 +162,11 @@ def fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=200):
     each is factorised once (sparse LU) and reused on every iteration."""
     k = np.flatnonzero(_on(lines))
     f, t = (lines[c].to_numpy(int)[k] - 1 for c in ("From", "To"))
-    Bp = _susceptance(len(V0), f, t, 1 / lines["X"].to_numpy(float)[k])
+    X = lines["X"].to_numpy(float)[k]
+    if (X == 0).any():   # a LinAlgError: gridcore.loadflow moves on to Newton-Raphson
+        raise np.linalg.LinAlgError("Fast Decoupled needs X ≠ 0 on every line in service "
+                                    f"(lines {_names(f, t, X == 0)} have X = 0): B' is 1/X.")
+    Bp = _susceptance(len(V0), f, t, 1 / X)
     lu1 = _lu(Bp[ang][:, ang])
     lu2 = _lu(-Y.imag[mag][:, mag]) if len(mag) else None
     th, V = th0.copy(), V0.copy()
@@ -179,6 +183,11 @@ def fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=200):
             dQ = (Qsp - injections(Y, V, th).imag)[mag]
             V[mag] += lu2.solve(dQ / V[mag])
     return th, V, False, hist
+
+
+def _names(f, t, mask):
+    """"From-To" (1-based) of the branches where mask is true."""
+    return ", ".join(f"{i + 1}-{j + 1}" for i, j in zip(f[mask], t[mask]))
 
 
 def _susceptance(n, f, t, b):
@@ -289,7 +298,11 @@ def dc_model(n, lines):
     a = np.where(a > 0, a, 1.0)
     phi = np.radians(np.nan_to_num(lines["Shift"].to_numpy(float)[k])) if "Shift" in lines \
         else np.zeros(len(k))
-    b = 1 / (lines["X"].to_numpy(float)[k] * a)
+    X = lines["X"].to_numpy(float)[k]
+    if (X == 0).any():
+        raise ValueError("the DC load flow needs X ≠ 0 on every line in service (lines "
+                         f"{_names(f, t, X == 0)} have X = 0); use the AC load flow.")
+    b = 1 / (X * a)
     Pshift = np.bincount(f, -b * phi, n) + np.bincount(t, b * phi, n)
     return k, f, t, b, phi, _susceptance(n, f, t, b), Pshift
 

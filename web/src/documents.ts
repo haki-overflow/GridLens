@@ -806,8 +806,10 @@ function cellMarks(problems: string[], c: CaseData): Map<string, string> {
       c.bus.forEach((b, r) => { if (dup.has(Number(b.Num))) put("bus", r, "Num", p); });
     } else if (p.startsWith("Lines reference buses that do not exist")) {
       for (const x of p.matchAll(/row (\d+): (From|To) =/g)) put("line", Number(x[1]) - 1, x[2]!, p);
-    } else if (p.startsWith("Series reactance X must be greater than 0")) {
-      c.lines.forEach((l, r) => { if (Number.isFinite(Number(l.X)) && Number(l.X) <= 0) put("line", r, "X", p); });
+    } else if (p.startsWith("Series impedance must not be zero")) {
+      c.lines.forEach((l, r) => {
+        if (Number(l.R ?? 0) === 0 && Number(l.X ?? 0) === 0) { put("line", r, "R", p); put("line", r, "X", p); }
+      });
     } else if ((g = /buses ([\d, ]+) have no path to a Slack/.exec(p))) rows(g[1]!).forEach((r) => put("bus", r, "#", p));
   }
   return m;

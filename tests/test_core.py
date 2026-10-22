@@ -72,10 +72,15 @@ def test_problem_two_slacks():
         "More than one Slack bus (buses 1, 2); exactly one required."]
 
 
-def test_problem_zero_x():
-    lines = L5.assign(X=[0.0] + list(L5["X"][1:]))
+def test_problem_zero_impedance():
+    # v2.3: only R = X = 0 is refused; X < 0 (series capacitor) and X = 0 with R > 0 are fine
+    lines = L5.assign(R=[0.0] + list(L5["R"][1:]), X=[0.0] + list(L5["X"][1:]))
     assert _probs(B5, lines) == [
-        "Series reactance X must be greater than 0 (lines 1-2)."]
+        "Series impedance must not be zero: R = X = 0 on lines 1-2. Give X a small value "
+        "(such as 0.0001) or join the two buses."]
+    assert _probs(B5, lines.assign(InService=[0] + [1] * 6)) == []    # out of service
+    assert _probs(B5, L5.assign(X=[0.0] + list(L5["X"][1:]))) == []    # R = 0.02 only
+    assert _probs(B5, L5.assign(X=[-0.06] + list(L5["X"][1:]))) == []  # series capacitor
 
 
 def test_problem_line_to_missing_bus():

@@ -305,3 +305,56 @@ def test_q_limited_generator_holds_qmax_and_lets_v_drop():
     qg = out["res"]["Q_inj"].iloc[1] + 0.5
     assert qg == pytest.approx(0.2, abs=1e-9)
     assert v2 == pytest.approx(_v2(1.0, 0.6, 0.5 - 0.2, 0.2), abs=1e-9)
+
+
+# ------------------------------------------------- v2.3: negative X, X = 0 with R > 0
+from solver import dc_loadflow  # noqa: E402
+import topics  # noqa: E402
+
+
+@pytest.mark.parametrize("method", ["Newton-Raphson", "Fast Decoupled"])
+def test_series_capacitor_cancels_part_of_a_line(method):
+    # a line of X = 0.3 in series with a capacitor of X = -0.1 (through a middle bus) is
+    # the same as one line of X = 0.2 seen from the load bus
+    bus3 = pd.DataFrame({"Type": ["Slack", "PQ", "PQ"], "V": [1.0] * 3, "Pg": [0.0] * 3,
+                         "Qg": [0.0] * 3, "Pd": [0.0, 0.0, 0.6], "Qd": [0.0, 0.0, 0.2]})
+    lines3 = pd.DataFrame({"From": [1, 2], "To": [2, 3], "R": [0.0, 0.0], "X": [0.3, -0.1],
+                           "B": [0.0, 0.0]})
+    b, l, probs, _ = _prep(bus3, lines3)
+    assert probs == []
+    res, flows, ok, _ = solve_loadflow(b, l, method, 1e-10)
+    assert ok
+    assert res["V (pu)"].iloc[2] == pytest.approx(_v2(1.0, 0.6, 0.2, 0.2), abs=1e-9)
+    assert np.radians(res["Angle (deg)"].iloc[2]) == pytest.approx(
+        np.arcsin(-0.6 * 0.2 / res["V (pu)"].iloc[2]), abs=1e-9)
+
+
+def test_line_with_resistance_only():
+    # X = 0, R > 0 is accepted and Newton-Raphson solves it. Fast Decoupled (B' = 1/X) and
+    # the DC load flow cannot take it and say so; the fallback moves on to Newton-Raphson
+    # and the method comparison marks FD as not converged.
+    bus = pd.DataFrame({"Type": ["Slack", "PQ", "PQ"], "V": [1.0] * 3, "Pg": [0.0] * 3,
+                        "Qg": [0.0] * 3, "Pd": [0.0, 0.3, 0.4], "Qd": [0.0, 0.1, 0.1]})
+    lines = pd.DataFrame({"From": [1, 2, 1], "To": [2, 3, 3], "R": [0.01, 0.05, 0.02],
+                          "X": [0.2, 0.0, 0.3], "B": [0.0] * 3})
+    b, l, probs, _ = _prep(bus, lines)
+    assert probs == []
+    assert solve_loadflow(b, l, "Newton-Raphson", 1e-10)[2]
+    with pytest.raises(np.linalg.LinAlgError, match="needs X ≠ 0 .*lines 2-3"):
+        solve_loadflow(b, l, "Fast Decoupled")
+    with pytest.raises(ValueError, match="needs X ≠ 0 .*lines 2-3"):
+        dc_loadflow(b, l)
+    res, flows, ok, hist, b_lf, qlog, attempts, hint = gridcore.loadflow(
+        b, l, "Fast Decoupled", 1e-8)
+    assert ok and attempts[0]["Converged"] is False and attempts[-1]["Method"] == "Newton-Raphson"
+    cmp = gridcore.run_study(b, l, "Newton-Raphson", 1e-8, 100.0, 0.95, 1.1)["cmp"]
+    assert cmp["Converged"].tolist() == [True, False, True]
+
+
+def test_zero_sequence_reactance_is_a_plain_error():
+    gens = pd.DataFrame({"Bus": [1], "X1": [0.2], "X2": [0.2], "X0": [0.05], "Xn": [0.0],
+                         "Conn": ["Yg"]})
+    br = pd.DataFrame({"From": [1], "To": [2], "Kind": ["line"], "X1": [0.0], "X2": [0.0],
+                       "X0": [0.0], "Conn From": ["Yg"], "Conn To": ["Yg"]})
+    with pytest.raises(ValueError, match="a sequence reactance is 0"):
+        topics.seq_ybus(2, gens, br, 1)

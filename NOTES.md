@@ -1,4 +1,4 @@
-# Notes for the next session (v2.2)
+# Notes for the next session (v2.3)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -35,11 +35,16 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   branch, so the golden snapshots do not move.
 - Cross-check tool (scratch only, not a dependency): pip install --target <dir> pypower, then
   pypower.api rundcpf / runpf on a ppc built from the same .m text (formats._matrix).
+- v2.3: only R = X = 0 (in service) is refused; negative X and X = 0 with R > 0 are accepted.
+  FD raises LinAlgError for X = 0 (fallback -> NR; method comparison shows FD not converged),
+  DC and the FD trace raise ValueError, a zero sequence reactance is a plain error. case300 now
+  loads and solves (NR 5 its, 15 ms; FD 15 its). tests/data/case300.m added. 151 tests pass.
+- Seen on case300: Gauss-Seidel does not converge in 5000 sweeps and takes 18 s; run_study's
+  3-method check runs it on every study. Phase 2 item (with "hide Show working above 30 buses").
+- case300.m stored Vm/Va are not MATPOWER's runpf answer (up to 9.8 deg away): for the reference
+  suite use runpf values (PYPOWER runpf gives MATPOWER's algorithm), not the stored ones.
 
 ## Next: Phase 1, engine v2 (do in this order, one version bump per change)
-3. Accept negative X; refuse only R = X = 0 (gridcore.prep_case; case300 has a series capacitor).
-   Fast Decoupled (B' = 1/X) and the DC load flow (1/(X a)) cannot take X = 0: refuse those two
-   methods for such a case with a plain message, or fall back to NR.
 4. Element model with stable IDs (Bus, Line, Transformer, Generator, Load, Shunt) + converters from
    the v1 bus/line tables and from formats.py readers; results keyed by element ID.
 5. Q limits in N-1 and PV curve; N-1 drops isolated buses and reports lost load.

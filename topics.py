@@ -117,6 +117,10 @@ OPEN = 1e9          # stand-in impedance for "no zero-sequence path"
 
 
 def _y(x):
+    if float(x) == 0:   # e.g. seeded from a resistance-only line (X = 0)
+        raise ValueError("a sequence reactance is 0: the sequence networks are reactance "
+                         "only, so give every generator and branch a reactance in the "
+                         "sequence data.")
     return 1 / complex(0, float(x))
 
 

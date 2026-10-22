@@ -128,11 +128,12 @@ def prep_case(bus_df, lines_df, cfg):
         probs.append("Lines reference buses that do not exist (buses run "
                      "from 1 to N in row order): " + "; ".join(
             f"row {r}: {c} = {v}" for r, v, c in sorted(out_of_range)))
-    zero_x = [f"{int(l['From'][i])}-{int(l['To'][i])}" for i in range(len(l))
-              if l["X"][i] <= 0]
-    if zero_x:
-        probs.append("Series reactance X must be greater than 0 (lines " +
-                     ", ".join(zero_x) + ").")
+    zero_z = [f"{int(l['From'][i])}-{int(l['To'][i])}" for i in range(len(l))
+              if l["InService"][i] and l["R"][i] == 0 and l["X"][i] == 0]
+    if zero_z:   # X < 0 (series capacitor) and X = 0 with R > 0 are fine
+        probs.append("Series impedance must not be zero: R = X = 0 on lines " +
+                     ", ".join(zero_z) + ". Give X a small value (such as 0.0001) or "
+                     "join the two buses.")
 
     if slacks and len(islands) > 1:
         dead = [isl for isl in islands if not any(b["Type"].iloc[i] == "Slack" for i in isl)]
@@ -323,7 +324,11 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
     used = next((a for a in attempts if a["Converged"]), attempts[0])
     rows = []
     for m in METHODS:
-        r2, f2, ok2, h2 = solve_loadflow(b, l, m)
+        try:
+            r2, f2, ok2, h2 = solve_loadflow(b, l, m)
+        except np.linalg.LinAlgError:   # e.g. Fast Decoupled with a line of X = 0
+            rows.append([m, False, None, None, None])
+            continue
         rows.append([m, ok2, len(h2) - 1,
                      round(f2["Loss_P"].sum() * base, 4),
                      round(r2["V (pu)"].min(), 4)])

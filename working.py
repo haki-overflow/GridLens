@@ -173,6 +173,9 @@ def fd_matrices(bus, lines):
     Bp = np.zeros((n, n))
     for _, l in in_service(lines).iterrows():
         i, j = int(l["From"]) - 1, int(l["To"]) - 1
+        if l["X"] == 0:
+            raise ValueError(f"Fast Decoupled needs X ≠ 0 on every line (line {i + 1}-{j + 1} "
+                             "has X = 0): B' is 1/X. Use Newton-Raphson for this case.")
         b = 1 / l["X"]
         Bp[i, i] += b
         Bp[j, j] += b

@@ -90,7 +90,7 @@ def _next(kind):
         if job is None:
             return
         job.status, job.started = "running", time.monotonic()
-        job.stage_t = job.started
+        job.stage, job.stage_t, job.total = "Working", job.started, 1   # until it reports
         work = job.work
     threading.Thread(target=job.run, args=(work,), name=f"gridlens-{kind}", daemon=True).start()
 
@@ -100,9 +100,9 @@ def start(kind, work):
     job = Job(kind, work)
     with _lock:
         _jobs[job.id] = job
-        ended = [k for k, j in _jobs.items() if j.status in ENDED]
-        for k in ended[:max(0, len(_jobs) - KEEP)]:
-            del _jobs[k]
+        ended = sorted((j for j in _jobs.values() if j.status in ENDED), key=lambda j: j.ended)
+        for j in ended[:max(0, len(ended) - KEEP)]:    # the oldest finished; never a live one
+            del _jobs[j.id]
     _next(kind)
     return job.snapshot()
 

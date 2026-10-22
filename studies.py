@@ -161,5 +161,5 @@ def pv_curve(bus, lines, step=0.1, lmax=6.0, qlim=False, progress=None):
         else:
             h /= 2
         tick(len(rows), None)
-    cols =["lambda"] + [f"Bus {i}" for i in range(1, len(bus) + 1)]
+    cols = ["lambda"] + [f"Bus {i}" for i in range(1, len(bus) + 1)]
     return pd.DataFrame(rows, columns=cols), lam

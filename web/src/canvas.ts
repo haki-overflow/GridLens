@@ -620,8 +620,11 @@ registerDoc("canvas", (el) => {
     if (ownXY(c)) return post<Layout>("/api/layout", c);
     const t0 = performance.now();
     const j = await jobRun<Layout>("layout", c, (j) => {
-      if (my !== token) return;
       const on = j.status === "queued" || j.status === "running";
+      if (my !== token) {   // replaced, perhaps before refresh knew this job: stop it
+        if (on) void cancelJob(j.id).catch(() => {});
+        return;
+      }
       layJob = on ? j.id : null;
       lay.textContent = lay.title = `Laying out ${c.bus.length.toLocaleString("en-US")} buses: ${jobText(j)}`;
       lay.hidden = !on || performance.now() - t0 < 500;   // a quick layout shows no chip

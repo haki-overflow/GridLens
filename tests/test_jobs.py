@@ -66,8 +66,11 @@ def test_job_reports_progress_and_result():
         if s["done"] == 3:
             break
         time.sleep(0.002)
-    assert (s["stage"], s["done"], s["total"]) == ("Counting", 3, 4)
-    assert s["eta"] is not None and s["eta"] >= 0 and "result" not in s
+    time.sleep(0.6)
+    s = jobs.get(j["id"])
+    assert (s["stage"], s["done"], s["total"]) == ("Counting", 3, 4) and "result" not in s
+    # time left = the stage's time so far / 3 done * 1 to go (about 0.2 s here)
+    assert 0.15 <= s["eta"] <= s["elapsed"] / 3 + 0.1
     gate.set()
     s = wait(j["id"])
     assert s["status"] == "done" and s["result"] == {"answer": 42} and s["eta"] is None
@@ -76,13 +79,17 @@ def test_job_reports_progress_and_result():
 
 
 def test_cancel_stops_a_running_job_at_its_next_progress_call():
-    calls = []
+    calls, stopped = [], threading.Event()
 
     def work(progress):
-        for i in range(10_000):
-            progress("Loop", i, 10_000)
-            calls.append(i)
-            time.sleep(0.001)
+        try:
+            for i in range(10_000):
+                progress("Loop", i, 10_000)
+                calls.append(i)
+                time.sleep(0.001)
+        except jobs.Cancelled:
+            stopped.set()             # the work itself was stopped, not just the status
+            raise
         return "finished"
 
     j = jobs.start("test", work)
@@ -90,6 +97,7 @@ def test_cancel_stops_a_running_job_at_its_next_progress_call():
     while not calls:
         time.sleep(0.001)
     jobs.cancel(j["id"])
+    assert stopped.wait(5)
     s = wait(j["id"])
     assert s["status"] == "cancelled" and "result" not in s
     assert len(calls) < 10_000
@@ -155,12 +163,24 @@ def test_only_the_last_finished_jobs_are_kept():
         ids.append(jobs.start("test", lambda p: None)["id"])
         wait(ids[-1])
     gate = threading.Event()
-    held = jobs.start("test", lambda p: gate.wait(5))   # running jobs are never dropped
-    assert len(jobs.listing()) <= jobs.KEEP + 1 and jobs.get(held["id"]) is not None
-    assert jobs.get(ids[-1]) is not None
+    held = jobs.start("test", lambda p: gate.wait(5))   # a running job is never dropped
+    later = jobs.start("test", lambda p: None)          # nor a queued one
+    assert jobs.get(held["id"]) is not None and jobs.get(later["id"]) is not None
+    assert all(jobs.get(i) is not None for i in ids[-jobs.KEEP:])   # the last 8 finished
     assert jobs.get(ids[0]) is None and jobs.cancel(ids[0]) is None
     gate.set()
-    wait(held["id"])
+    wait(later["id"])
+
+
+def test_a_long_job_that_finishes_last_is_kept_while_short_ones_come_and_go():
+    gate = threading.Event()
+    long = jobs.start("long-study", lambda p: (gate.wait(5), "answer")[1])
+    for _ in range(jobs.KEEP + 2):            # shorter jobs of another kind finish meanwhile
+        wait(jobs.start("short-layout", lambda p: None)["id"])
+    gate.set()
+    assert wait(long["id"])["result"] == "answer"
+    wait(jobs.start("short-layout", lambda p: None)["id"])     # one more job starts
+    assert jobs.get(long["id"])["result"] == "answer"         # the client can still fetch it
 
 
 # ------------------------------------------------------------ the studies
@@ -266,10 +286,11 @@ def test_job_result_is_exactly_the_study_response(name):
 def test_bad_data_is_refused_before_a_job_starts():
     case = client.get("/api/case/5-bus (demo)").json()
     case["bus"][0]["Type"] = "Swing"
-    before = len(client.get("/api/jobs").json()["jobs"])
+    ids = lambda: {j["id"] for j in client.get("/api/jobs").json()["jobs"]}   # noqa: E731
+    before = ids()
     r = client.post("/api/jobs", json={"case": case})
     assert r.status_code == 422 and any("Slack, PV or PQ" in p for p in r.json()["problems"])
-    assert len(client.get("/api/jobs").json()["jobs"]) == before
+    assert ids() <= before            # no new job (pruning may only drop old ones)
     r = client.post("/api/jobs", json={"kind": "nope", "case": case})
     assert r.status_code == 422 and r.json()["problems"][0].startswith("body.kind")
 
@@ -280,10 +301,16 @@ def test_unknown_jobs_are_404():
 
 
 def test_cancel_through_the_api(monkeypatch):
+    stopped = threading.Event()
+
     def slow_study(*args, progress=None, **kw):
-        for i in range(20_000):
-            progress("Line outages (N-1)", i, 20_000)
-            time.sleep(0.001)
+        try:
+            for i in range(20_000):
+                progress("Line outages (N-1)", i, 20_000)
+                time.sleep(0.001)
+        except jobs.Cancelled:
+            stopped.set()
+            raise
         raise AssertionError("not cancelled")
 
     monkeypatch.setattr(gridcore, "run_study", lambda *a: slow_study(*a[:-1], progress=a[-1]))
@@ -294,6 +321,7 @@ def test_cancel_through_the_api(monkeypatch):
         time.sleep(0.002)
     r = client.delete(f"/api/jobs/{jid}")
     assert r.status_code == 200 and r.json()["id"] == jid
+    assert stopped.wait(5)            # the study itself stopped, not just its status
     s = poll(jid)
     assert s["status"] == "cancelled" and s["stage"] == "Line outages (N-1)"
     assert any(j["id"] == jid for j in client.get("/api/jobs").json()["jobs"])

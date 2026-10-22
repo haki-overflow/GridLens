@@ -387,7 +387,7 @@ def _stress(D, iters=300, progress=_quiet):
     Vp = np.linalg.pinv(V)
     for it in range(iters):
         progress("Stress layout", it, iters)
-        dist =np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
+        dist = np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
         np.fill_diagonal(dist, 1.0)
         Bm = -W * D / np.maximum(dist, 1e-9)
         np.fill_diagonal(Bm, 0.0)

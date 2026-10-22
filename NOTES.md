@@ -97,7 +97,7 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   If lost, re-read those files or rerun bench.py on final/proto.py before redesigning.
 - v2.8: background jobs (jobs.py; /api/jobs start / poll / cancel; kinds "study" and "layout",
   one at a time per kind, kinds in parallel; web: Run becomes Stop with stage, count and time left,
-  layout chip on the canvas). 218 tests. Browser check (scratchpad jobcheck.py): progress, Stop,
+  layout chip on the canvas). 219 tests. Browser check (scratchpad jobcheck.py): progress, Stop,
   a new case stopping the study and the layout, case300 full study 10 s.
 - Found in v2.8: the layout of case2383wp takes ~145 s CPU on one core (300 dense stress
   iterations, 0.43 s each; hops 4.6 s, MDS eigh 3.4 s, pinv 7 s), and while it runs it slows the

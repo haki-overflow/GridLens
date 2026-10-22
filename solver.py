@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
+from scipy.sparse.linalg import splu
 
 METHODS = ["Newton-Raphson", "Fast Decoupled", "Gauss-Seidel"]
 
@@ -10,6 +12,13 @@ def in_service(lines):
     if "InService" not in lines:
         return lines
     return lines[lines["InService"].fillna(1).astype(float) != 0]
+
+
+def _on(lines):
+    """in_service as a mask over the row positions."""
+    if "InService" not in lines:
+        return np.ones(len(lines), bool)
+    return lines["InService"].fillna(1).astype(float).to_numpy() != 0
 
 
 def branch_y(l):
@@ -44,36 +53,108 @@ def build_ybus(n, lines, bus=None):
     return Y
 
 
+def branch_admittances(lines):
+    """branch_y for every in-service branch at once: (k, f, t, yff, ytt, yft,
+    ytf) with k the row positions and f, t the 0-based From / To bus rows."""
+    k = np.flatnonzero(_on(lines))
+
+    def col(c, missing=None):
+        return lines[c].to_numpy(float)[k] if missing is None or c in lines \
+            else np.full(len(k), missing)
+    a = col("Tap", 1.0)
+    a = np.where(a > 0, a, 1.0)                  # 0 / blank = no tap
+    s = np.nan_to_num(col("Shift", 0.0))
+    y = 1 / (col("R") + 1j * col("X"))
+    b = 0.5j * col("B")
+    t = a * np.exp(1j * np.radians(s))
+    return (k, col("From").astype(int) - 1, col("To").astype(int) - 1,
+            y / a**2 + b, y + b, -y / np.conj(t), -y / t)
+
+
+def ybus_sparse(n, lines, bus=None):
+    """build_ybus as a sparse CSR array, made in one step from the branch
+    admittances (no Python loop). The engine uses this one; build_ybus stays
+    for the worked solution and the textbook pages."""
+    _, f, t, yff, ytt, yft, ytf = branch_admittances(lines)
+    Y = sp.csr_array((np.r_[yff, ytt, yft, ytf], (np.r_[f, t, f, t], np.r_[f, t, t, f])),
+                     shape=(n, n))
+    ysh = np.zeros(n, complex)
+    for c, unit in (("Gs", 1), ("Bs", 1j)):
+        if bus is not None and c in bus:
+            ysh += unit * bus[c].fillna(0).astype(float).to_numpy()
+    return (Y + sp.diags_array(ysh)).tocsr()
+
+
 def injections(Y, V, th):
     Vc = V * np.exp(1j * th)
     return Vc * np.conj(Y @ Vc)
 
 
 def newton_raphson(Y, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=30, damp=1.0):
-    def unpack(x):
-        th, V = th0.copy(), V0.copy()
-        th[ang] = x[: len(ang)]
-        V[mag] = x[len(ang):]
-        return th, V
-
-    def mismatch(x):
-        S = injections(Y, *unpack(x)[::-1])
-        return np.r_[(S.real - Psp)[ang], (S.imag - Qsp)[mag]]
-
-    x = np.r_[th0[ang], V0[mag]]
+    """Polar Newton-Raphson on the sparse Ybus with the analytical Jacobian
+    (as MATPOWER's newtonpf), unknowns θ at ang and |V| at mag, one sparse
+    LU solve per iteration. Stops early when the mismatch is no longer a
+    number (diverged)."""
+    th, V = th0.copy(), V0.copy()
+    S0 = Psp + 1j * Qsp
+    jacobian = _jacobian(Y, ang, mag)
     hist = []
     for _ in range(max_iter):
-        f = mismatch(x)
-        hist.append(abs(f).max())
+        E = np.exp(1j * th)
+        Vc = V * E
+        I = Y @ Vc
+        mis = Vc * np.conj(I) - S0
+        f = np.r_[mis.real[ang], mis.imag[mag]]
+        hist.append(np.abs(f).max(initial=0))
         if hist[-1] < tol:
-            return *unpack(x), True, hist
-        J = np.zeros((len(x), len(x)))
-        for c in range(len(x)):  # central-difference Jacobian
-            d = np.zeros(len(x))
-            d[c] = 1e-6
-            J[:, c] = (mismatch(x + d) - mismatch(x - d)) / 2e-6
-        x = x - damp * np.linalg.solve(J, f)
-    return *unpack(x), False, hist
+            return th, V, True, hist
+        if not np.isfinite(hist[-1]):
+            break
+        dx = _lu_solve(jacobian(Vc, E, I), f)
+        th[ang] -= damp * dx[:len(ang)]
+        V[mag] -= damp * dx[len(ang):]
+    return th, V, False, hist
+
+
+def _jacobian(Y, ang, mag):
+    """The Jacobian as a function of (Vc, E, I), filled into a sparse pattern
+    that is fixed once per solve. From S = diag(Vc) conj(I), I = Y Vc,
+    Vc = |V| E (MATPOWER dSbus_dV, polar), for each Ybus entry Y_ik:
+        dS_i/dθ_k   = -j Vc_i conj(Y_ik Vc_k)  + (i = k) j Vc_i conj(I_i)
+        dS_i/d|V|_k =  Vc_i conj(Y_ik E_k)     + (i = k) conj(I_i) E_i
+    J = [[Re dS/dθ, Re dS/d|V|], [Im dS/dθ, Im dS/d|V|]] with the P rows at
+    ang, the Q rows at mag, the θ columns at ang and the |V| columns at mag."""
+    n, na = Y.shape[0], len(ang)
+    Yc = Y.tocoo()
+    i, k = np.r_[Yc.row, np.arange(n)], np.r_[Yc.col, np.arange(n)]  # + the (i = k) terms
+    pa, pm = np.full(n, -1), np.full(n, -1)   # row / column of each bus's θ and |V|
+    pa[ang], pm[mag] = np.arange(na), na + np.arange(len(mag))
+    sel, rows, cols = [], [], []
+    for r, c in ((pa, pa), (pa, pm), (pm, pa), (pm, pm)):
+        s = np.flatnonzero((r[i] >= 0) & (c[k] >= 0))
+        sel.append(s)
+        rows.append(r[i[s]])
+        cols.append(c[k[s]])
+    N = na + len(mag)
+    key, slot = np.unique(np.concatenate(cols) * N + np.concatenate(rows), return_inverse=True)
+    indices, indptr = key % N, np.searchsorted(key // N, np.arange(N + 1))
+
+    def jacobian(Vc, E, I):
+        dth = np.r_[-1j * Vc[Yc.row] * np.conj(Yc.data * Vc[Yc.col]), 1j * Vc * np.conj(I)]
+        dV = np.r_[Vc[Yc.row] * np.conj(Yc.data * E[Yc.col]), np.conj(I) * E]
+        vals = np.r_[dth.real[sel[0]], dV.real[sel[1]], dth.imag[sel[2]], dV.imag[sel[3]]]
+        data = np.bincount(slot, weights=vals, minlength=len(key))
+        return sp.csc_array((data, indices, indptr), shape=(N, N))
+    return jacobian
+
+
+def _lu_solve(J, f):
+    """J x = f by sparse LU; an exactly singular J raises LinAlgError like
+    numpy.linalg.solve (gridcore.loadflow then tries another method)."""
+    try:
+        return splu(J).solve(f)
+    except RuntimeError as e:   # SuperLU: "Factor is exactly singular"
+        raise np.linalg.LinAlgError(str(e)) from None
 
 
 def fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=200):
@@ -138,7 +219,7 @@ def solve_loadflow(bus, lines, method="Newton-Raphson", tol=1e-8, init="flat",
         raise ValueError("Exactly one Slack bus is required.")
     if not lines[["From", "To"]].isin(range(1, n + 1)).all().all():
         raise ValueError("Line From/To must be bus numbers 1..N.")
-    Y = build_ybus(n, lines, bus)
+    Y = ybus_sparse(n, lines, bus)
     V0 = bus["V"].astype(float).values.copy()
     th0 = np.zeros(n)
     va = np.radians(pd.to_numeric(bus["Va"], errors="coerce").fillna(0).to_numpy(float)) \
@@ -156,39 +237,33 @@ def solve_loadflow(bus, lines, method="Newton-Raphson", tol=1e-8, init="flat",
 
     its = {} if max_iter is None else {"max_iter": max_iter}
     if method == "Fast Decoupled":
-        th, V, ok, hist = fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, **its)
-    elif method == "Gauss-Seidel":
-        th, V, ok, hist = gauss_seidel(Y, V0, th0, t, Psp, Qsp, tol, **its)
+        th, V, ok, hist = fast_decoupled(build_ybus(n, lines, bus), lines, V0, th0, Psp, Qsp,
+                                         ang, mag, tol, **its)
+    elif method == "Gauss-Seidel":   # dense: teaching only
+        th, V, ok, hist = gauss_seidel(build_ybus(n, lines, bus), V0, th0, t, Psp, Qsp, tol,
+                                       **its)
     else:
         th, V, ok, hist = newton_raphson(Y, V0, th0, Psp, Qsp, ang, mag, tol, damp=damp, **its)
 
     Vc = V * np.exp(1j * th)
     S = Vc * np.conj(Y @ Vc)
-    rows = []
-    on = in_service(lines).index
-    for k, l in lines.iterrows():
-        i, j = int(l["From"]) - 1, int(l["To"]) - 1
-        if k not in on:  # out of service: no flow
-            rows.append([i + 1, j + 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            continue
-        y, b = 1 / complex(l["R"], l["X"]), 1j * l["B"] / 2
-        a = l["Tap"] if "Tap" in l and l["Tap"] > 0 else 1.0
-        if "Shift" in l and l["Shift"]:
-            yff, ytt, yft, ytf = branch_y(l)
-            Sij = Vc[i] * np.conj(Vc[i] * yff + Vc[j] * yft)
-            Sji = Vc[j] * np.conj(Vc[j] * ytt + Vc[i] * ytf)
-        else:
-            Sij = Vc[i] * np.conj((Vc[i] / a**2 - Vc[j] / a) * y + Vc[i] * b)
-            Sji = Vc[j] * np.conj((Vc[j] - Vc[i] / a) * y + Vc[j] * b)
-        L = Sij + Sji
-        rows.append([i + 1, j + 1, Sij.real, Sij.imag, Sji.real, Sji.imag,
-                     L.real, L.imag])
-    flows = pd.DataFrame(rows, columns=["From", "To", "P_ij", "Q_ij", "P_ji",
-                                        "Q_ji", "Loss_P", "Loss_Q"])
     res = pd.DataFrame({"Bus": np.arange(1, n + 1), "V (pu)": V,
                         "Angle (deg)": np.degrees(th),
                         "P_inj": S.real, "Q_inj": S.imag})
-    return res, flows, ok, hist
+    return res, branch_flows(lines, Vc), ok, hist
+
+
+def branch_flows(lines, Vc):
+    """Power into each branch at both ends (S_ij at From, S_ji at To) and
+    the loss S_ij + S_ji, per unit; out-of-service rows carry 0."""
+    k, f, t, yff, ytt, yft, ytf = branch_admittances(lines)
+    Sij, Sji = np.zeros(len(lines), complex), np.zeros(len(lines), complex)
+    Sij[k] = Vc[f] * np.conj(yff * Vc[f] + yft * Vc[t])
+    Sji[k] = Vc[t] * np.conj(ytt * Vc[t] + ytf * Vc[f])
+    L = Sij + Sji
+    return pd.DataFrame({"From": lines["From"].to_numpy(int), "To": lines["To"].to_numpy(int),
+                         "P_ij": Sij.real, "Q_ij": Sij.imag, "P_ji": Sji.real,
+                         "Q_ji": Sji.imag, "Loss_P": L.real, "Loss_Q": L.imag})
 
 # ============================================================================
 # Generator Q limits (PV -> PQ switching)

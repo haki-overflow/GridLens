@@ -44,7 +44,8 @@ GridLens/
 ├── ui.py           Streamlit helpers and pages: HTML helpers, editable tables, Problem input,
 │                   textbook topic pages, worked-solution pages (Ybus, Iterations, Worked answer)
 ├── figures.py      palette from theme.css, matplotlib / Plotly styles, charts, the one-line diagram
-├── solver.py       METHODS, build_ybus, the three solvers, solve_loadflow, PV -> PQ Q limits
+├── solver.py       METHODS, sparse Ybus and Newton-Raphson (v2.1), dense build_ybus (teaching),
+│                   Fast Decoupled, Gauss-Seidel, solve_loadflow, PV -> PQ Q limits
 ├── studies.py      contingency (N-1), outage, pv_curve, fault_analysis (3-phase via Zbus)
 ├── working.py      Ybus terms, traced GS / NR (analytical J1..J4) / FD, worked-answer text
 ├── topics.py       textbook calculators: symmetrical components, line ABCD, sequence faults
@@ -172,7 +173,7 @@ Results: `res` has `Bus`, `V (pu)`, `Angle (deg)`, `P_inj`, `Q_inj`; `flows` has
 ## Testing
 
 - `legacy/check_refactor.py` compared the split modules with the original single file; `tests/test_core.py` (golden results) replaced it.
-- `./venv/bin/python -m pytest` runs the suite in `tests/` (126 tests in v1.6). v1.6 adds `test_golden_api.py` (every study endpoint on both examples must return exactly what v1.5 returned), `test_anycase.py` (validation, islands, phase shifter, shunt G, in-service flags, fallback chain, failure hints, ratings, actual units, Saadat Example 6.7 entered in ohms and MW, tap transformer and Q-limited generator against closed forms) and `test_formats.py` (MATPOWER case9 and case14 against MATPOWER's published runpf answers, case118, IEEE CDF, CSV, big-network layout). Earlier tests: per-unit conversion and zones; Q limits (identical results when no limit binds, PV->PQ at Qmax); Ybus terms sum to `build_ybus` and Ybus is symmetric; the analytical Jacobian matches a numerical one; the GS (α = 1, exact), NR and FD traces end on `solve_loadflow`'s answer; GS/NR/FD agree within 1e-4 pu; SLG current = 3Vf/(Z1+Z2+Z0+3Zf), LL/DLG boundary conditions, Δ-Yg zero sequence, per-bus kA; symmetrical-component identities; dispatch (closed-form λ, limits, coordination equations with losses); ABCD reciprocity AD − BC = 1.
+- `./venv/bin/python -m pytest` runs the suite in `tests/` (139 tests in v2.1). v2.1 adds `test_engine.py` (the sparse Ybus equals the dense one, including taps, phase shifters, out-of-service and parallel branches and shunts; the sparse Jacobian matches central differences on five cases; a singular step raises `LinAlgError`; case118 solves in 4 iterations). v1.6 adds `test_golden_api.py` (every study endpoint on both examples must return exactly what v1.5 returned), `test_anycase.py` (validation, islands, phase shifter, shunt G, in-service flags, fallback chain, failure hints, ratings, actual units, Saadat Example 6.7 entered in ohms and MW, tap transformer and Q-limited generator against closed forms) and `test_formats.py` (MATPOWER case9 and case14 against MATPOWER's published runpf answers, case118, IEEE CDF, CSV, big-network layout). Earlier tests: per-unit conversion and zones; Q limits (identical results when no limit binds, PV->PQ at Qmax); Ybus terms sum to `build_ybus` and Ybus is symmetric; the analytical Jacobian matches a numerical one; the GS (α = 1, exact), NR and FD traces end on `solve_loadflow`'s answer; GS/NR/FD agree within 1e-4 pu; SLG current = 3Vf/(Z1+Z2+Z0+3Zf), LL/DLG boundary conditions, Δ-Yg zero sequence, per-bus kA; symmetrical-component identities; dispatch (closed-form λ, limits, coordination equations with losses); ABCD reciprocity AD − BC = 1.
 - `python tools/check_contrast.py` checks every text/background pair of the theme against WCAG AA (4.5:1).
 - `python tools/walkthrough.py` (workspace running) clicks through every view, draws a network, and enters Saadat Example 6.7 from a blank case in ohms and MW; `python tools/shots.py` screenshots every view at 1366x768.
 
@@ -181,7 +182,7 @@ Results: `res` has `Bus`, `V (pu)`, `Angle (deg)`, `P_inj`, `Q_inj`; `flows` has
 - Generator Q limits (optional) apply to the main load flow only; N-1, P-V and the solver check still solve without them.
 - The Streamlit app (`app.py`) keeps its v1.5 features; New case, actual units, file import and the new tables are in the web workspace only.
 - Sequence networks are reactance-only and Δ-Y transformer phase shifts (30°) are not modelled.
-- The solver's Newton-Raphson uses a central-difference numerical Jacobian, so big cases are slow: the full IEEE 118 study (load flow, 186 N-1 outages, PV curve, 3-method check) takes about 25 s. The Iterations page uses the analytical Jacobian.
+- Since v2.1 Newton-Raphson is sparse with the analytical Jacobian: case2383wp (2,383 buses) solves in about 50 ms. The full study is still slow on big cases, because N-1 and the P-V curve re-solve once per outage and per step, and the 3-method check runs dense Gauss-Seidel. Phase 2 of docs/design-v2.md moves these to background jobs.
 - MATPOWER scales line charging by 1/tap² on transformers; GridLens keeps B/2 unscaled at both ends. It only matters for a transformer with both a tap and charging B (none in the MATPOWER test cases).
 
 ## License and credits

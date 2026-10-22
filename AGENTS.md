@@ -13,13 +13,15 @@ Built for Hacktoberfest, so everything must use open-weight models and open-sour
 - All quantities are **per unit**. Base MVA is a setting. Line `B` = total line charging susceptance (split B/2 at each end).
 - Do NOT change solver logic unless explicitly asked. Refactors are move-only; verify with a comparison script that old and new outputs match exactly.
 - Keep code short and readable. Small functions, one job per module, easy to debug.
-- Use only: numpy, pandas, matplotlib, plotly, streamlit, requests, pytest, fastapi, httpx, uvicorn. Ask before adding a dependency.
+- Use only: numpy, scipy (sparse matrices, v2 engine), pandas, matplotlib, plotly, streamlit, requests, pytest, fastapi, httpx, uvicorn. Ask before adding a dependency.
 - Fix bugs in the module that owns them. Do not patch around them in callers.
 
 ## Layout (v1.3: few files, each with one job)
 ```
-solver.py      METHODS, build_ybus, injections, newton_raphson, fast_decoupled,
-               gauss_seidel, solve_loadflow; solve_with_qlimits (PV -> PQ switching)
+solver.py      METHODS, build_ybus (dense, for teaching), branch_admittances,
+               ybus_sparse (the engine's Ybus), newton_raphson (sparse),
+               fast_decoupled, gauss_seidel, solve_loadflow, branch_flows;
+               solve_with_qlimits (PV -> PQ switching)
 studies.py     contingency (N-1), outage (one line out), pv_curve (load
                scaling to the nose), fault_analysis (3-phase, Zbus)
 working.py     ybus_parts, gauss_seidel_trace (alpha), newton_trace (analytical
@@ -70,13 +72,13 @@ The original single-file version lives in `legacy/power_flow_methods.py`.
   - `ok`: converged flag, `hist`: error per iteration (`len(hist) - 1` = iterations)
 
 ## Methods
-- Newton-Raphson (numerical central-difference Jacobian; `working.newton_trace` uses the analytical one for display)
+- Newton-Raphson (v2.1: sparse, analytical Jacobian as MATPOWER's newtonpf, one sparse LU per iteration; `working.newton_trace` shows the same steps with dense J1..J4)
 - Fast Decoupled (XB version: B' from series X, B'' from Ybus imaginary part)
 - Gauss-Seidel (PV buses: Q recomputed each sweep, |V| held at setpoint)
 
 ## Run
 ```
-pip install streamlit numpy pandas matplotlib plotly requests pytest
+pip install -r requirements.txt
 streamlit run app.py
 ```
 LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Server (port 1234). The app lists loaded models from `http://127.0.0.1:1234/v1/models`; no model id is hardcoded.
@@ -91,7 +93,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 1. (fixed in v1.6) Gauss-Seidel now honours `tol` in `solve_loadflow`, so the method comparison is fair.
 2. (fixed in v1.3) `ai_report` now raises on HTTP errors.
 3. (fixed in v1.6) Fault kA uses each bus's own base kV where the case has one (the input is the default for the rest).
-4. Numerical Jacobian is slow on large cases (IEEE 118 full study ~25 s, mostly N-1); an analytical one exists in `working.jacobian`. Switching would change NR results in the last bits, so the golden snapshots would need regenerating with the user's OK.
+4. (fixed in v2.1) Newton-Raphson uses the sparse analytical Jacobian: case2383wp solves in about 50 ms (47 s before). Results moved by at most 1.2e-12, and the golden snapshots were regenerated with the user's OK. The full study on big cases is still slow (N-1 and the P-V curve re-solve once per outage / step, and the 3-method check runs dense Gauss-Seidel); that is phase 2.
 7. MATPOWER divides a transformer's charging by tap²; GridLens keeps B/2 unscaled at both ends (only differs for a tapped branch with B > 0).
 5. PV Q limits are optional (`solver.solve_with_qlimits`, default off) and apply to the main load flow only, not to N-1 / P-V / the solver check.
 6. Sequence networks are reactance-only; Δ-Y 30° phase shifts are not modelled.
@@ -107,7 +109,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - Theme: dark only. Colours live in `theme.css` `:root`; `ui.py` injects it and `figures.py` sets matplotlib/Plotly styles from it; `.streamlit/config.toml` is `base = "dark"` with the same colours. One accent, `--accent` #3B82F6 (active page, primary buttons, selected options, focus); `--hazard` #F2B705 rules the header; red/amber only for violations and STALE. Run `tools/check_contrast.py` after colour changes (AA 4.5:1). Keep app.py free of styling.
 
 ## Testing
-- `venv/bin/python -m pytest` (tests/): per unit, Q limits (identical results with no binding limit), Ybus terms and symmetry, analytical vs numerical Jacobian, every trace ends on the solver's answer, GS/NR/FD agree within 1e-4 pu, SLG = 3Vf/(Z1+Z2+Z0+3Zf) and LL/DLG boundary conditions, dispatch, ABCD reciprocity.
+- `venv/bin/python -m pytest` (tests/): per unit, Q limits (identical results with no binding limit), Ybus terms and symmetry, analytical vs numerical Jacobian, sparse Ybus = dense Ybus and the sparse Jacobian vs central differences (`test_engine.py`), every trace ends on the solver's answer, GS/NR/FD agree within 1e-4 pu, SLG = 3Vf/(Z1+Z2+Z0+3Zf) and LL/DLG boundary conditions, dispatch, ABCD reciprocity.
 - Textbook worked examples go in `tests/test_textbook.py` with the book's data and its printed precision.
 - After any refactor, run a comparison script that asserts old and new outputs match exactly.
 
@@ -138,3 +140,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - Layout: `figures.layout` uses `_layered` up to `BIG` = 24 buses and `_stress_rows` (stress majorization on hop distances, rows of equal count, packed) with `_straight` branches above; the canvas writes only bus numbers when zoomed out and shrinks symbols (`symUnit` 8-60 px). A new case opens fitted when the fit keeps names readable (k >= `NAMES_K` 14 px per unit); a bigger one opens at `READ_K` (22) around its Slack bus, kept inside the drawing, with a "Showing n of N buses" chip that fits on click (Fit / Ctrl+0 always shows all).
 - Chrome colours: selection is `--hdr` fill with an `--axis` border; Run is the only accent (`--sel` fill); blue (`--accent`) remains only for the selected element on the diagram.
 - Messages: the log holds the current run only (cleared by Run, a new case, and the Clear button) and is not saved to localStorage.
+
+## v2: engine (plan in docs/design-v2.md)
+- Golden snapshots: standing OK from the user (2026-10-22) to regenerate them (`GOLDEN_WRITE=1` for `test_golden_api.py` and `test_core.py`) for phase 1 engine changes, after checking every result against the old snapshot within 1e-9; give the largest difference in the commit message.
+- v2.1: `solver.ybus_sparse` builds Ybus as a scipy CSR array from `branch_admittances` (the vectorised `branch_y`, in-service rows only). `build_ybus` (dense, a Python loop) stays for the worked solution, the Ybus page and the Zbus fault study; `test_engine.py` checks that the two agree. `newton_raphson` works on the sparse Ybus: `_jacobian(Y, ang, mag)` fixes the sparse pattern once per solve and refills it on every iteration, and an exactly singular step raises `LinAlgError`, as numpy does. `branch_flows` computes every branch at once. Fast Decoupled is still dense (moving in v2.2); Gauss-Seidel stays dense (teaching only).

@@ -1,7 +1,11 @@
-"""gridcore: the pure study must give exactly what the app gave before the
-move-only refactor. tests/data/core_golden.pkl holds res, flows, ok,
-iterations, cmp, n1 and pv from app._study at 52e819d (before the move), for both
-presets with default settings and with generator Q limits on."""
+"""gridcore: the pure study must give exactly what the snapshot holds.
+tests/data/core_golden.pkl holds res, flows, ok, iterations, cmp, n1 and pv
+for both presets with default settings and with generator Q limits on. It was
+taken from app._study at 52e819d (before the move-only refactor) and
+regenerated at v2.1 (sparse Newton-Raphson, every value within 1e-13 of the
+old one). Regenerate (only after an approved maths change):
+GOLDEN_WRITE=1 pytest tests/test_core.py"""
+import os
 import pickle
 from pathlib import Path
 
@@ -12,7 +16,8 @@ from pandas.testing import assert_frame_equal
 import gridcore
 from gridcore import CASES
 
-GOLDEN = pickle.loads((Path(__file__).parent / "data" / "core_golden.pkl").read_bytes())
+GOLDEN_FILE = Path(__file__).parent / "data" / "core_golden.pkl"
+GOLDEN = pickle.loads(GOLDEN_FILE.read_bytes())
 CFG = dict(method="Newton-Raphson", base=100.0, vmin=0.95, vmax=1.10,
            tol=1e-8, taps=False, shunts=False, qlim=False)
 
@@ -28,8 +33,14 @@ def _run(name, qlim):
 @pytest.mark.parametrize("qlim", [False, True])
 @pytest.mark.parametrize("name", list(CASES))
 def test_run_study_matches_previous_app(name, qlim):
-    out, ref = _run(name, qlim), GOLDEN[(name, qlim)]
-    for k in ("res", "flows", "cmp", "n1"):   # v1.6 may add columns, never change old ones
+    out = _run(name, qlim)
+    if os.environ.get("GOLDEN_WRITE"):
+        GOLDEN[(name, qlim)] = {k: out[k] for k in ("res", "flows", "ok", "its", "cmp",
+                                                   "n1", "pv")}
+        GOLDEN_FILE.write_bytes(pickle.dumps(GOLDEN))
+        pytest.skip("snapshot written")
+    ref = GOLDEN[(name, qlim)]
+    for k in ("res", "flows", "cmp", "n1"):   # later versions may add columns, never change old ones
         assert_frame_equal(out[k][list(ref[k].columns)], ref[k], check_exact=True)
     assert_frame_equal(out["pv"][0], ref["pv"][0], check_exact=True)
     assert out["pv"][1] == ref["pv"][1]

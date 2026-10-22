@@ -238,6 +238,7 @@ const svg = (body: string) =>
 
 export const ICON = {
   run: svg('<path d="M4 3l9 5-9 5z" fill="currentColor" stroke="none"/>'),
+  stop: svg('<rect x="4" y="4" width="8" height="8" fill="currentColor" stroke="none"/>'),
   reset: svg('<path d="M3 8a5 5 0 1 0 1.5-3.5"/><path d="M3 2.5v3h3"/>'),
   open: svg('<path d="M2 4h4l1.5 1.5H14v7.5H2z"/>'),
   save: svg('<path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 12v2h10v-2"/>'),

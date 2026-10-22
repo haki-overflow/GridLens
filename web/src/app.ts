@@ -42,6 +42,7 @@ export const post = <T>(path: string, body: unknown) => busy(call<T>("POST", pat
 
 // Thin progress bar under the toolbar. Requests nest: the bar shows while
 // any is running. The screen is never blanked; views keep old results.
+// While a study job runs the bar fills with its stage's progress instead.
 let count = 0;
 let bar: HTMLElement | null = null;
 
@@ -50,7 +51,10 @@ export function mountBusy(el: HTMLElement): void {
 }
 
 function paint(): void {
-  bar?.classList.toggle("on", count > 0);
+  const pct = job?.total ? Math.min(100, (job.done / job.total) * 100) : null;
+  bar?.classList.toggle("on", count > 0 || (job !== null && pct === null));
+  bar?.classList.toggle("job", pct !== null);
+  bar?.style.setProperty("--pct", `${pct ?? 0}%`);
 }
 
 export async function busy<T>(work: Promise<T>): Promise<T> {
@@ -62,6 +66,97 @@ export async function busy<T>(work: Promise<T>): Promise<T> {
     count -= 1;
     paint();
   }
+}
+
+// ---- jobs --------------------------------------------------------------
+
+// Long work runs as server jobs (POST /api/jobs, polled, DELETE to stop):
+// the full study (Run / Stop; only the toolbar and the progress bar listen,
+// so a poll never repaints the documents) and the layout of a big case
+// without positions (canvas.ts).
+export interface Job<R = Study> {
+  id: string; kind: string; status: "queued" | "running" | "done" | "failed" | "cancelled";
+  stage: string; done: number; total: number | null; elapsed: number; eta: number | null;
+  result?: R; problems?: string[]; notes?: string[];
+}
+
+const POLL_MS = 250;
+const live = new Set<string>();   // jobs this page is waiting for
+
+/** Start a job and poll it (sooner at first, so a quick one returns
+ *  quickly) until it ends; every snapshot goes to onPoll. A failed job
+ *  throws an ApiError with its problems. */
+export async function jobRun<R>(kind: string, c: CaseData, onPoll: (j: Job<R>) => void): Promise<Job<R>> {
+  let j = await post<Job<R>>("/api/jobs", { kind, case: c });
+  live.add(j.id);
+  try {
+    onPoll(j);
+    for (let wait = 40; j.status === "queued" || j.status === "running"; wait = Math.min(POLL_MS, wait * 2)) {
+      await new Promise((ok) => setTimeout(ok, wait));
+      j = await call<Job<R>>("GET", `/api/jobs/${j.id}`);
+      onPoll(j);
+    }
+  } finally {
+    live.delete(j.id);
+  }
+  if (j.status === "failed") throw new ApiError(422, j.problems ?? [], j.notes ?? []);
+  return j;
+}
+
+export const cancelJob = (id: string) => call("DELETE", `/api/jobs/${id}`);
+
+let job: Job | null = null;
+let dropped = false;   // the results were cleared while it ran: ignore its answer
+const jobListeners = new Set<(j: Job | null) => void>();
+
+export const currentJob = () => job;
+
+export function onJob(fn: (j: Job | null) => void): () => void {
+  jobListeners.add(fn);
+  return () => jobListeners.delete(fn);
+}
+
+function setJob(j: Job | null): void {
+  job = j;
+  paint();
+  for (const fn of jobListeners) fn(j);
+}
+
+/** Stop the running study (Stop button; also when its results stop
+ *  mattering: a new case, Reset). The study ends within one outage. */
+export async function stop(drop = false): Promise<void> {
+  if (drop && (job || starting)) dropped = true;
+  if (!job) return;   // still being created: runJob stops it once it has an id
+  await cancelJob(job.id).catch((e) => drop || report(e, "Stopping the study"));
+}
+
+/** "12 s", "3 min". */
+export function duration(s: number): string {
+  return s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`;
+}
+
+/** "Line outages (N-1): 1,234 of 2,896 · about 40 s left". */
+export function jobText(j: Job<unknown>): string {
+  if (j.status === "queued") return `Waiting for another ${j.kind} to finish...`;
+  const n = (v: number) => v.toLocaleString("en-US");
+  if (j.total === 1) return `${j.stage}...`;   // one step: nothing to count
+  const count = j.total ? `${n(j.done)} of ${n(j.total)}` : `${n(j.done)} so far`;
+  const left = j.eta !== null && j.eta >= 1 ? ` · about ${duration(j.eta)} left` : "";
+  return `${j.stage}: ${count}${left}`;
+}
+
+// a reload or a closed tab must not leave the server busy with jobs nobody waits for
+window.addEventListener("pagehide", () => {
+  for (const id of live) void fetch(`/api/jobs/${id}`, { method: "DELETE", keepalive: true }).catch(() => {});
+});
+
+function runJob(c: CaseData): Promise<Job> {
+  let first = true;
+  return jobRun<Study>("study", c, (j) => {
+    setJob(j);
+    if (first && dropped) void stop();   // the results were cleared while it was being created
+    first = false;
+  });
 }
 
 // ---- router ------------------------------------------------------------
@@ -237,8 +332,11 @@ export function subscribe(fn: Listener): () => void {
 }
 
 /** Change the state. A new case is pushed onto the undo history unless
- *  history is false (undo / redo themselves, or the very first case). */
+ *  history is false (undo / redo themselves, or the very first case).
+ *  Clearing the results (a new case, an import, Reset) also drops a running
+ *  study: its answer would belong to the case that was replaced. */
 export function setState(patch: Partial<State>, history = true): void {
+  if ("results" in patch && patch.results === null) void stop(true);
   if (history && "case" in patch && patch.case !== state.case && state.case) {
     undoStack.push(state.case);
     if (undoStack.length > HISTORY) undoStack.shift();
@@ -392,19 +490,24 @@ export async function loadPreset(name: string, chosen = true): Promise<void> {
   }
 }
 
-let running = false;
+let starting = false;   // Run pressed, job not created yet
 
 export async function run(): Promise<void> {
   const c = getState().case;
-  if (!c || running) return;
-  running = true;
+  if (!c || job || starting) return;
+  starting = true;
+  dropped = false;
   const sig = caseSig(c);
   clearMessages();   // the log shows the current run only
-  log("info", `Running study (${c.settings.method}) on ${c.name}...` + (c.lines.length > 60
-    ? ` The line-outage (N-1) and PV studies re-solve the case many times: about ${Math.max(5, Math.round(c.lines.length * c.bus.length / 900))} s for ${c.bus.length} buses.`
-    : ""));
+  log("info", `Running study (${c.settings.method}) on ${c.name}...`);
   try {
-    const out = await post<Study>("/api/study", c);
+    const j = await runJob(c).finally(() => { starting = false; });
+    if (dropped) return;
+    if (j.status === "cancelled") {
+      log("warn", "Study stopped. The results shown (if any) are from the last finished run.");
+      return;
+    }
+    const out = j.result!;
     setState({ results: out, solvedCase: c, solvedSig: sig });
     for (const n of out.notes ?? []) log("warn", n);
     const loss = out.loss.toFixed(3);
@@ -413,10 +516,11 @@ export async function run(): Promise<void> {
       : `Load flow did not converge (${(out.attempts ?? []).length} attempts: ` +
         `${(out.attempts ?? []).map((a) => `${a.Method}, ${a.Start} start`).join("; ")}).`);
     if (!out.ok && out.hint) log("error", out.hint);
+    if (j.elapsed >= 2) log("info", `The study took ${duration(j.elapsed)}.`);
   } catch (e) {
-    report(e, "The study");
+    if (!dropped) report(e, "The study");
   } finally {
-    running = false;
+    setJob(null);
   }
 }
 

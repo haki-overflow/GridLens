@@ -2,8 +2,8 @@
 // Sections follow the order of the files this one replaced; search for '// ----'.
 import * as d3 from "d3";
 import {
-  ApiError, NEW_LINE, NEW_TRAFO, addBus, addLine, caseSig, delBus, delLine, editBus, getState, post, report,
-  setState, subscribe, type CaseData, type Rec, type Selection, type State,
+  ApiError, NEW_LINE, NEW_TRAFO, addBus, addLine, cancelJob, caseSig, delBus, delLine, editBus, getState, jobRun,
+  jobText, post, report, setState, subscribe, type CaseData, type Rec, type Selection, type State,
 } from "./app";
 import { registerDoc } from "./documents";
 import { h, isTyping } from "./ui";
@@ -11,8 +11,10 @@ import { h, isTyping } from "./ui";
 // ---- canvas ------------------------------------------------------------
 
 // One-line diagram (D3). Positions and branch routes come from
-// /api/layout (oneline.layout, the same as the Streamlit diagram); bus
-// colours from the last results. Wheel = zoom, drag empty space = pan,
+// /api/layout (oneline.layout, the same as the Streamlit diagram; a case
+// without positions on every bus goes through a layout job, which can take
+// minutes on a big case and shows its progress in a chip); bus colours
+// from the last results. Wheel = zoom, drag empty space = pan,
 // Fit (Ctrl+0). Drawing tools: Select (V), Bus (B), Line (L),
 // Transformer (T), Generator (G), Load (D), Delete (Del); Esc = Select.
 //
@@ -210,7 +212,12 @@ registerDoc("canvas", (el) => {
   part.hidden = true;
   part.title = "Fit the whole network in the window (Ctrl+0)";
   part.addEventListener("click", (e) => { e.stopPropagation(); fit(); });
-  chips.append(chip, warn);
+  const lay = h("div", "layout-chip");   // a big case's layout being computed
+  lay.hidden = true;
+  lay.setAttribute("aria-live", "polite");
+  let layJob: string | null = null;      // the layout job of the latest request
+  let laying = false;                    // a case without positions waits for its layout
+  chips.append(chip, warn, lay);
   const hint = h("div", "canvas-hint");
   hint.setAttribute("aria-live", "polite");
   const top = h("div", "canvas-top");   // tools on the right, chips left of them (or below)
@@ -320,6 +327,10 @@ registerDoc("canvas", (el) => {
     gOver.selectAll("*").remove();
     const c = s.case;
     if (!c) return;
+    if (laying && !matched(c) && !ownXY(c)) {   // only the layout chip, no row of unplaced buses
+      part.hidden = true;
+      return;
+    }
     const G = geo(c);
     const X = (x: number) => t.applyX(x), Y = (y: number) => t.applyY(y);
     const u = symUnit(t.k);
@@ -602,29 +613,54 @@ registerDoc("canvas", (el) => {
     warn.hidden = false;
   };
 
+  /** The layout: straight from /api/layout when every bus has a position
+   *  (only the routing is left: instant), otherwise as a job whose progress
+   *  shows in a chip; null when a newer request replaced it. */
+  const fetchLayout = async (c: CaseData, my: number): Promise<Layout | null> => {
+    if (ownXY(c)) return post<Layout>("/api/layout", c);
+    const t0 = performance.now();
+    const j = await jobRun<Layout>("layout", c, (j) => {
+      if (my !== token) return;
+      const on = j.status === "queued" || j.status === "running";
+      layJob = on ? j.id : null;
+      lay.textContent = lay.title = `Laying out ${c.bus.length.toLocaleString("en-US")} buses: ${jobText(j)}`;
+      lay.hidden = !on || performance.now() - t0 < 500;   // a quick layout shows no chip
+    });
+    return j.status === "done" ? j.result! : null;
+  };
+
   /** Ask the server for the layout. An unfinished drawing is checked with
    *  /api/validate first (always 200, so the browser logs no failed
    *  request); it keeps the canvas, drawn from the buses' x, y, and a
-   *  warning chip says what is missing. */
+   *  warning chip says what is missing. A layout job still running for an
+   *  older request is stopped. */
   const refresh = async (c: CaseData) => {
     const my = ++token;
+    if (layJob) void cancelJob(layJob).catch(() => {});
+    layJob = null;
+    lay.hidden = true;
+    laying = !ownXY(c);
     const sig = sigOf(c);
     try {
       const v = await post<{ problems: string[] }>("/api/validate", c);
       if (my !== token) return;
       if (v.problems.length) showWarn(v.problems);
       else {
-        const L = await post<Layout>("/api/layout", c);
+        const L = await fetchLayout(c, my);
         if (my !== token) return;
-        layout = L;
-        layoutFor = sig;
-        warn.hidden = true;
+        if (L) {
+          layout = L;
+          layoutFor = sig;
+          warn.hidden = true;
+        }
       }
     } catch (e) {
       if (my !== token) return;
       if (e instanceof ApiError && e.status === 422) showWarn(e.problems);
       else report(e, "The diagram layout");
     }
+    laying = false;
+    lay.hidden = true;
     fitIfNeeded();
     schedule();
   };

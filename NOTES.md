@@ -1,4 +1,4 @@
-# Notes for the next session (v2.7: phase 2 started)
+# Notes for the next session (v2.8: phase 2, jobs done)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -88,14 +88,22 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   /root/.claude/projects/-home-user/a5b7a850-f9b9-4e44-bf19-1dc1368ade9e/subagents/workflows/wf_314ef0c9-14f/journal.jsonl
   (prototypes, benchmark, three judges, synthesis with a v2.9 integration plan, two verifiers).
   If lost, re-read those files or rerun bench.py on final/proto.py before redesigning.
-- Plan: v2.8 background jobs (in progress), then v2.9 the winning fast N-1.
+- v2.8: background jobs (jobs.py; /api/jobs start / poll / cancel; kinds "study" and "layout",
+  one at a time per kind, kinds in parallel; web: Run becomes Stop with stage, count and time left,
+  layout chip on the canvas). 218 tests. Browser check (scratchpad jobcheck.py): progress, Stop,
+  a new case stopping the study and the layout, case300 full study 10 s.
+- Found in v2.8: the layout of case2383wp takes ~145 s CPU on one core (300 dense stress
+  iterations, 0.43 s each; hops 4.6 s, MDS eigh 3.4 s, pinv 7 s), and while it runs it slows the
+  study job (same process). A faster layout is its own version (same algorithm, vectorised:
+  precomputed W*D, no (n, n, 2) temporaries, csgraph BFS, eigh-based pinv), after the fast N-1.
+- Plan: v2.9 the winning fast N-1, then the fast layout.
 
 ## Next: Phase 2, studies and jobs (docs/design-v2.md; one version bump per change, v2.7 on)
 Gate: all 2,896 branch outages of case2383wp in under 2 min; IEC TR 60909-4 examples match.
 Suggested order:
 1. (done in v2.7) Teaching methods only up to 30 buses: Gauss-Seidel and Show working.
-2. Jobs: long studies (N-1, P-V) as background jobs with progress and cancel (API job endpoints,
-   polling or WebSocket; web progress bar instead of a frozen Run). Layout progress too.
+2. (done in v2.8) Jobs: long studies (N-1, P-V) as background jobs with progress and cancel
+   (polling; web progress instead of a frozen Run). Layout progress too.
 3. Fast N-1: DC screening with PTDF / LODF from solver.dc_model, then AC (studies.outage) only for
    the outages that screen as bad or islanding; generator outages; transformers as their own kind.
 4. Continuation power flow with Q limits (PV / QV curves); check the noses of IEEE 14 / 118.

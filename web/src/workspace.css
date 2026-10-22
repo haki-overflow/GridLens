@@ -73,6 +73,12 @@ button, input, select { font: inherit; color: inherit; }
   width: 30%; background: var(--muted); opacity: 0; }
 .ws-busy.on::after { opacity: 1; animation: busy 900ms linear infinite; }
 @keyframes busy { from { left: -30%; } to { left: 100%; } }
+/* a study job: the bar fills with the current stage's progress */
+.ws-busy.job::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0;
+  width: var(--pct, 0%); background: var(--muted); transition: width 200ms linear; }
+.tb-job { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 360px; padding: 0 4px; }
+.tb-job[hidden] { display: none; }
 
 /* --- panels ---------------------------------------------------------------- */
 .panel { display: flex; flex-direction: column; min-width: 0; min-height: 0;
@@ -315,7 +321,10 @@ pre.answer { background: var(--canvas); border: 1px solid var(--border); padding
 .canvas-warn { padding: 2px 8px; font-size: 11px; color: var(--amber); background: var(--panel);
   border: 1px solid var(--amber-border); cursor: help; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; max-width: 100%; }
-.outage-chip[hidden], .canvas-warn[hidden] { display: none; }
+.layout-chip { padding: 2px 8px; font-size: 11px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--axis); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%; font-variant-numeric: tabular-nums; }
+.outage-chip[hidden], .canvas-warn[hidden], .layout-chip[hidden] { display: none; }
 .bus-hit { cursor: move; }
 
 /* ---- drawing tools ------------------------------------------------------------ */

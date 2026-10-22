@@ -301,16 +301,24 @@ def line_loading(flows, l, base):
                          "Loading (%)": pct})
 
 
+STAGES = ("Load flow", "Method check", "Line outages (N-1)", "P-V curve")
+
+
 def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
-              fallback=True):
+              fallback=True, progress=None):
     """Load flow plus every study (method comparison, N-1, P-V). With qlim
     the main load flow enforces generator Q limits (PV -> PQ). The main load
-    flow falls back to other methods/starts when it does not converge."""
+    flow falls back to other methods/starts when it does not converge.
+    progress(stage, done, total) follows the stages (STAGES) for a
+    background job; whatever it raises stops the study."""
+    say = progress or (lambda *_: None)
+    say(STAGES[0], 0, 1)
     res, flows, ok, hist, b_lf, qlog, attempts, hint = loadflow(
         b, l, method, tol, qlim, init, fallback)
     used = next((a for a in attempts if a["Converged"]), attempts[0])
     rows, notes = [], []
-    for m in METHODS:
+    for i, m in enumerate(METHODS):
+        say(STAGES[1], i, len(METHODS))
         if m == "Gauss-Seidel" and len(b) > TEACH_MAX:
             rows.append([m, None, None, None, None])
             notes.append(f"not run: a teaching method, used up to {TEACH_MAX} buses")
@@ -329,13 +337,13 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
                                          "Loss (MW)", "Min V (pu)"])
     if any(notes):
         cmp_df["Note"] = notes
-    n1 = contingency(b, l, vmin, vmax, base, qlim)
+    n1 = contingency(b, l, vmin, vmax, base, qlim, lambda d, t: say(STAGES[2], d, t))
     loading = line_loading(flows, l, base)
     n1_text = n1 if (n1["Overloads"].fillna(0) > 0).any() else \
         n1.drop(columns=["Overloads", "Lines overloaded"])
     if not (n1["Status"] == "ISLANDED").any():
         n1_text = n1_text.drop(columns=["Lost load (MW)", "Buses cut off"])
-    pv = pv_curve(b, l, qlim=qlim)
+    pv = pv_curve(b, l, qlim=qlim, progress=lambda d, t: say(STAGES[3], d, t))
     loss = flows["Loss_P"].sum() * base
     load = b["Pd"].sum() * base
     k = int(np.where(b["Type"].values == "Slack")[0][0])

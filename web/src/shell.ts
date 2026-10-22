@@ -1,6 +1,6 @@
 // Workspace shell: layout, splitters, tabs, toolbar, title/status.
 // Sections follow the order of the files this one replaced; search for '// ----'.
-import { VIEWS, canRedo, canUndo, exportProject, importCaseFiles, newCase, navigateView, viewOf, getState, isStale, loadPreset, navigate, presets, redo, report, reset, run, subscribe, undo, type NewCase, type State } from "./app";
+import { VIEWS, canRedo, canUndo, currentJob, exportProject, importCaseFiles, jobText, newCase, navigateView, viewOf, getState, isStale, loadPreset, navigate, onJob, presets, redo, report, reset, run, stop, subscribe, undo, type NewCase, type State } from "./app";
 import { openWizard } from "./documents";
 import { mountOutput, paintProps } from "./panels";
 import { ICON, editingText, h } from "./ui";
@@ -38,7 +38,7 @@ export function buildShell(app: HTMLElement): Shell {
   const title = h("header", "ws-title");
   const readouts = h("div", "read");
   const brand = h("div", "brand", "GRIDLENS");
-  brand.append(h("span", "ver", " v2.7"));
+  brand.append(h("span", "ver", " v2.8"));
   title.append(brand, readouts);
   const tools = h("nav", "ws-tools");
   tools.setAttribute("aria-label", "Toolbar");
@@ -226,8 +226,9 @@ export class DocTabs {
 
 // ---- toolbar -----------------------------------------------------------
 
-// Toolbar: Run (F5) + STALE · Reset · Case [preset, Import, Export] ·
-// View [Fit (Ctrl+0), Grid, Flows, Angles] · Report.
+// Toolbar: Run (F5; Stop and the progress while a study runs) + STALE ·
+// Reset · Case [preset, Import, Export] · View [Fit (Ctrl+0), Grid, Flows,
+// Angles] · Report.
 
 function btn(icon: string, label: string, title: string, testid?: string): HTMLButtonElement {
   const b = h("button", "tb-btn");
@@ -300,6 +301,8 @@ export function casePicker(): HTMLInputElement {
 export function mountToolbar(bar: HTMLElement): void {
   const runB = btn(ICON.run, "Run", "Run the load flow and every study (F5)", "run");
   runB.classList.add("primary");
+  const jobL = h("span", "tb-job");
+  jobL.setAttribute("aria-live", "polite");
   const stale = h("span", "badge stale", "STALE");
   stale.title = "The case changed since the last run";
   const resetB = btn(ICON.reset, "Reset", "Clear the results (an example is reloaded)");
@@ -323,9 +326,16 @@ export function mountToolbar(bar: HTMLElement): void {
   undoB.addEventListener("click", undo);
   redoB.addEventListener("click", redo);
 
-  bar.append(group(runB, stale, resetB), group(undoB, redoB), group(fileMenu, file, caseName));
+  bar.append(group(runB, jobL, stale, resetB), group(undoB, redoB), group(fileMenu, file, caseName));
 
-  runB.addEventListener("click", () => void run());
+  runB.addEventListener("click", () => void (currentJob() ? stop() : run()));
+  onJob((j) => {
+    runB.innerHTML = j ? `${ICON.stop}<span>Stop</span>` : `${ICON.run}<span>Run</span>`;
+    runB.title = j ? "Stop the running study (the last results stay)" : "Run the load flow and every study (F5)";
+    jobL.textContent = j ? jobText(j) : "";
+    jobL.hidden = !j;
+  });
+  jobL.hidden = true;
   resetB.addEventListener("click", () => void reset());
 
   window.addEventListener("keydown", (e) => {
@@ -438,13 +448,14 @@ export function mountChrome(read: HTMLElement, status: HTMLElement, outTabs: HTM
       `<div><b>Solver</b>${esc(r?.method ?? st?.method ?? "-")}</div>` +
       `<div><b>Iterations</b>${r ? r.its : "-"}</div>` +
       `<div><b>Tolerance</b>${r ? r.tol : st?.tol ?? "-"}</div>` +
-      `<div class="fill"><b>Status</b>${sol === "SOLVED" ? "Converged" : sol === "STALE"
-        ? "Stale: press Run (F5)" : r ? "Not converged" : "Ready"}</div>` +
+      `<div class="fill"><b>Status</b>${currentJob() ? "Study running" : sol === "SOLVED" ? "Converged"
+        : sol === "STALE" ? "Stale: press Run (F5)" : r ? "Not converged" : "Ready"}</div>` +
       `<div class="file">${esc(s.fileName)}</div>`;
 
     paintProps(props, s);
   };
   subscribe(paint);
+  onJobChange(() => paint(getState()));
   paint(getState());
 }
 
@@ -513,7 +524,10 @@ export function mountHint(el: HTMLElement): void {
       el.hidden = true;
       return;
     }
-    if (!s.results && !s.case.lines.length) {
+    if (currentJob() && (!s.results || isStale(s))) {
+      [text, label, act] = ["The study is running: its progress is in the toolbar, the results appear when it "
+        + "finishes.", "Stop", () => void stop()];
+    } else if (!s.results && !s.case.lines.length) {
       [text, label, act] = ["Draw the network with the tools on the diagram, or fill in the tables.",
         "Data tables", () => navigate("case-tables")];
     } else if (!s.results) {
@@ -534,5 +548,16 @@ export function mountHint(el: HTMLElement): void {
     el.hidden = false;
   };
   subscribe(paint);
+  onJobChange(() => paint(getState()));
   paint(getState());
+}
+
+/** Call fn when a study starts or ends (not on every progress poll). */
+function onJobChange(fn: () => void): void {
+  let had = false;
+  onJob((j) => {
+    if (!!j === had) return;
+    had = !!j;
+    fn();
+  });
 }

@@ -345,13 +345,18 @@ ROW_BIG = 4.5     # row pitch for large networks
 GAP_BIG = 1.6     # gap between bars in a row
 
 
-def _hops(n, edges):
+def _quiet(*_):
+    """The progress callback when nobody listens."""
+
+
+def _hops(n, edges, progress=_quiet):
     adj = [[] for _ in range(n)]
     for a, b in edges:
         adj[a].append(b)
         adj[b].append(a)
     D = np.full((n, n), np.inf)
     for s in range(n):
+        progress("Hop distances", s, n)
         D[s, s] = 0
         todo = [s]
         while todo:
@@ -367,8 +372,9 @@ def _hops(n, edges):
     return D
 
 
-def _stress(D, iters=300):
+def _stress(D, iters=300, progress=_quiet):
     n = len(D)
+    progress("Starting positions", 0, 1)
     J = np.eye(n) - 1.0 / n
     vals, vecs = np.linalg.eigh(-0.5 * J @ (D ** 2) @ J)
     X = vecs[:, -2:][:, ::-1] * np.sqrt(np.maximum(vals[-2:][::-1], 1e-9))
@@ -379,8 +385,9 @@ def _stress(D, iters=300):
     V = -W.copy()
     V[np.diag_indices(n)] = W.sum(axis=1)
     Vp = np.linalg.pinv(V)
-    for _ in range(iters):
-        dist = np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
+    for it in range(iters):
+        progress("Stress layout", it, iters)
+        dist =np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
         np.fill_diagonal(dist, 1.0)
         Bm = -W * D / np.maximum(dist, 1e-9)
         np.fill_diagonal(Bm, 0.0)
@@ -393,8 +400,8 @@ def _stress(D, iters=300):
     return X
 
 
-def _stress_rows(n, edges, width):
-    X = _stress(_hops(n, edges))
+def _stress_rows(n, edges, width, progress=_quiet):
+    X = _stress(_hops(n, edges, progress), progress=progress)
     if np.ptp(X[:, 0]) < np.ptp(X[:, 1]):        # the long side across the screen
         X = X[:, ::-1]
     # rows chosen so the drawing comes out about 1.6 : 1, like the canvas
@@ -458,9 +465,11 @@ def _xy_columns(bus, n):
     return xy
 
 
-def layout(n, edges, bus=None, coords=None):
+def layout(n, edges, bus=None, coords=None, progress=None):
     """Bar centres (cx, cy; cy grows downward), widths and one polyline per
-    branch. Returns dict(cx, cy, w, routes)."""
+    branch. Returns dict(cx, cy, w, routes). progress(stage, done, total)
+    follows the slow part, the stress layout of a big network without
+    positions (a background job uses it; whatever it raises stops it)."""
     deg = np.zeros(n, int)
     for a, b in edges:
         deg[a] += 1
@@ -472,7 +481,7 @@ def layout(n, edges, bus=None, coords=None):
     if xy is not None:
         cx, cy = xy[:, 0].copy(), xy[:, 1].copy()
     elif n > BIG:
-        cx, cy = _stress_rows(n, edges, w)
+        cx, cy = _stress_rows(n, edges, w, progress or _quiet)
     else:
         types = bus["Type"].to_numpy() if bus is not None else [""] * n
         cx, cy = _layered(n, edges, types, w)

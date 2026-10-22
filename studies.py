@@ -26,17 +26,21 @@ def overloads(flows, lines, base):
     return [names[k] for k in range(len(rate)) if rate[k] > 0 and s[k] > rate[k] + 1e-9]
 
 
-def contingency(bus, lines, vmin, vmax, base=100.0, qlim=False):
+def contingency(bus, lines, vmin, vmax, base=100.0, qlim=False, progress=None):
     """N-1: remove each in-service line, re-solve (Newton-Raphson; generator Q
     limits when qlim), rank by severity: no solution (FAILED) first, then lost
     load, voltage violations, overloads and lowest voltage. An outage that
     cuts buses off from every Slack solves the rest (Status ISLANDED) and
-    reports the load of the buses cut off as lost."""
+    reports the load of the buses cut off as lost. progress(done, total) is
+    called before the first outage and after each one (a background job uses
+    it; whatever it raises stops the study)."""
     rows = []
     names = branch_names(lines)
     on = lines["InService"].fillna(1).astype(float).to_numpy() != 0 \
         if "InService" in lines else np.ones(len(lines), bool)
     pd_ = bus["Pd"].astype(float).to_numpy()
+    tick, todo = progress or _quiet, int(on.sum())
+    tick(0, todo)
     for k in range(len(lines)):
         if not on[k]:
             continue
@@ -58,6 +62,7 @@ def contingency(bus, lines, vmin, vmax, base=100.0, qlim=False):
         except Exception:
             rows.append([name, "FAILED", None, None, None, None, "no solution (diverged)", None,
                          "-", None, "-"])
+        tick(len(rows), todo)
     df = pd.DataFrame(rows, columns=["Outage", "Status", "Violations", "Min V (pu)", "At bus",
                                      "Loss (pu)", "Buses violating", "Overloads",
                                      "Lines overloaded", "Lost load (MW)", "Buses cut off"])
@@ -117,20 +122,27 @@ def solve_supplied(bus, lines, qlim=False):
     return res, flows, ok, hist, cut
 
 
+def _quiet(*_):
+    """The progress callback when nobody listens."""
+
+
 def _solve(bus, lines, qlim=False):
     """Newton-Raphson, with generator Q limits (PV -> PQ) when qlim."""
     return solve_with_qlimits(bus, lines)[:4] if qlim else solve_loadflow(bus, lines)
 
 
-def pv_curve(bus, lines, step=0.1, lmax=6.0, qlim=False):
+def pv_curve(bus, lines, step=0.1, lmax=6.0, qlim=False, progress=None):
     """P-V curve: scale every load and generator by lambda until NR fails
     (with generator Q limits when qlim; the limits are not scaled).
 
     The step halves on each failure (3 times), so the last converged lambda
     is a lower bound on the nose (maximum loadability) of the case.
     Returns (DataFrame with 'lambda' + one |V| column per bus, last lambda).
+    progress(points, None) is called after each load flow (the total is not
+    known in advance), as in contingency.
     """
     rows, lam, h = [], 0.0, step
+    tick = progress or _quiet
     while h >= step / 8 and lam + h <= lmax:
         trial = round(lam + h, 6) if rows else 0.0
         b = bus.copy()
@@ -148,5 +160,6 @@ def pv_curve(bus, lines, step=0.1, lmax=6.0, qlim=False):
             break
         else:
             h /= 2
-    cols = ["lambda"] + [f"Bus {i}" for i in range(1, len(bus) + 1)]
+        tick(len(rows), None)
+    cols =["lambda"] + [f"Bus {i}" for i in range(1, len(bus) + 1)]
     return pd.DataFrame(rows, columns=cols), lam

@@ -6,10 +6,11 @@ endpoint that takes a case validates it with gridcore.prep_case first and
 answers 422 {"problems": [...], "notes": [...]} when the data is wrong.
 Any other failure is also a 422 with a one-line problem, never a stack
 trace. All maths is done by the existing modules; this file only moves
-data in and out.
+data in and out. Long studies can also run as background jobs (/api/jobs,
+jobs.py): start, poll progress, cancel; an unknown job id is a 404.
 """
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 import gridcore
 import figures
 import formats
+import jobs
 import topics
 import working as W
 from gridcore import CASES
@@ -32,7 +34,7 @@ from .schema import complex_in, frame, to_json
 
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
-app = FastAPI(title="GridLens API", version="2.7",
+app = FastAPI(title="GridLens API", version="2.8",
               description="Load flow, N-1, faults and textbook tools as JSON.")
 
 
@@ -139,13 +141,13 @@ class ToPuIn(BaseModel):
 
 # ---------------------------------------------------------- error handling
 class Problems(Exception):
-    def __init__(self, problems, notes=()):
-        self.problems, self.notes = list(problems), list(notes)
+    def __init__(self, problems, notes=(), status=422):
+        self.problems, self.notes, self.status = list(problems), list(notes), status
 
 
 @app.exception_handler(Problems)
 async def _problems(_, e: Problems):
-    return JSONResponse(status_code=422,
+    return JSONResponse(status_code=e.status,
                         content={"problems": e.problems, "notes": e.notes})
 
 
@@ -234,13 +236,12 @@ def validate(case: Case):
     return {"problems": probs, "notes": notes}
 
 
-@app.post("/api/study")
-def study(case: Case):
-    b, l, notes = _prep(case)
+def _study(case, b, l, notes, progress=None):
+    """The full study (run_study) on validated tables, as JSON."""
     s = case.settings
     out = _guard(lambda: gridcore.run_study(b, l, s.method, s.tol, s.base,
                                             s.vmin, s.vmax, s.qlim, s.init,
-                                            s.fallback), "Study")
+                                            s.fallback, progress), "Study")
     pv, lam = out.pop("pv")
     if out["ok"] and len(out["attempts"]) > 1:
         notes = notes + [f"{s.method} ({s.init} start) did not converge; solved with "
@@ -249,13 +250,72 @@ def study(case: Case):
             "notes": notes}
 
 
+@app.post("/api/study")
+def study(case: Case):
+    b, l, notes = _prep(case)
+    return _study(case, b, l, notes)
+
+
+# -------------------------------------------------------------------- jobs
+class JobIn(BaseModel):
+    kind: Literal["study", "layout"] = Field(
+        "study", description='"study": everything /api/study returns (load flow, method '
+        'check, N-1, P-V curve); "layout": what /api/layout returns (minutes for a big case '
+        "without bus positions)")
+    case: Case
+
+
+JOBS = {"study": _study, "layout": lambda case, b, l, notes, progress: _layout(b, l, progress)}
+
+
+def _job(job_id, snap):
+    if snap is None:
+        raise Problems([f"No job {job_id!r}: it finished long ago or the server restarted."],
+                       status=404)
+    return snap
+
+
+@app.post("/api/jobs", status_code=202)
+def job_start(body: JobIn):
+    """Start a study in the background (the data is checked first: bad data
+    is a 422 here, not a failed job). Poll GET /api/jobs/{id} for progress
+    and, once status is "done", the result."""
+    b, l, notes = _prep(body.case)
+    work = JOBS[body.kind]
+    return jobs.start(body.kind, lambda progress: work(body.case, b, l, notes, progress))
+
+
+@app.get("/api/jobs")
+def job_list():
+    """Every job the server still keeps (queued, running, the last finished), no results."""
+    return {"jobs": jobs.listing()}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_get(job_id: str):
+    """status queued / running / done / failed / cancelled; stage, done of
+    total (null when unknown), elapsed and eta in seconds; result when done,
+    problems when failed."""
+    return _job(job_id, jobs.get(job_id))
+
+
+@app.delete("/api/jobs/{job_id}")
+def job_cancel(job_id: str):
+    """Cancel a job: its status is "cancelled" at once and the next job of its
+    kind starts; the work itself stops within one outage, load flow or layout
+    step."""
+    return _job(job_id, jobs.cancel(job_id))
+
+
+def _layout(b, l, progress=None):
+    edges = [(int(f) - 1, int(t) - 1) for f, t in zip(l["From"], l["To"])]
+    return to_json(_guard(lambda: figures.layout(len(b), edges, b, progress=progress), "Layout"))
+
+
 @app.post("/api/layout")
 def layout(case: Case):
     b, l, _ = _prep(case)
-    edges = [(int(f) - 1, int(t) - 1) for f, t in zip(l["From"], l["To"])]
-    g = _guard(lambda: figures.layout(len(b), edges, b),
-               "Layout")
-    return to_json(g)
+    return _layout(b, l)
 
 
 @app.post("/api/outage/{k}")

@@ -79,7 +79,14 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
 
 - The first run of workflow "design-fast-n1" (wf_f00bdf11-0fb) died with /clear before any
   result: a workflow only resumes in the session that launched it. Never /clear while one runs.
-- In flight (2026-10-22, session a5b7a850): "design-fast-n1" rerun wf_314ef0c9-14f, agents at
+- 2026-10-22 15:30 UTC: the usage limit stopped both workflows (design-fast-n1 and review-v28)
+  with no results; after the restart the Workflow tool was off, so the same plan runs as six
+  background agents (effort max): prototypes lean/, reuse/ (continuing their own files) and
+  screen/ in the n1 scratch below, and three v2.8 reviewers (Python, web, callers/docs/tests;
+  scripts in scratchpad/review28/). Their reports reach only the session that started them: after
+  a /clear, rerun from the files on disk (n1/*/proto.py, n1/bench.py if any). n1/ref.py is making
+  reference_qlim.pkl again (it was killed at a time limit; reference.pkl is done).
+- Earlier (2026-10-22, session a5b7a850): "design-fast-n1" rerun wf_314ef0c9-14f, agents at
   effort max (the user asked for ultracode / max). Scratch:
   /tmp/claude-0/-home-user/a5b7a850-f9b9-4e44-bf19-1dc1368ade9e/scratchpad/n1/ (lean/, reuse/,
   screen/ prototypes, lean_old/ and reuse_old/ from the first run, ref.py -> reference.pkl and

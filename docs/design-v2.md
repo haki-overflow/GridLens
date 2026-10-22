@@ -26,8 +26,8 @@ too (tests/test_reference.py).
 ## Phase 2 progress (2026-10-22)
 v2.7 teaching size limit (30 buses); v2.8 background jobs with progress and cancel (study, layout);
 v2.9 fast exact N-1: all 2,896 outages of case2383wp in about 20 s (37 s with Q limits), the same
-table as the plain re-solve (gate: under 2 minutes, passed). Open: generator outages, continuation
-power flow, IEC 60909, a faster layout.
+table as the plain re-solve (gate: under 2 minutes, passed); v2.10 layout of case2383wp in about 12 s
+(was 2.5 minutes). Open: generator outages, continuation power flow, IEC 60909.
 
 ## Blockers
 1. Dense engine (above). 2. Data model: generators, loads, shunts are bus columns; transformers are

@@ -171,6 +171,82 @@ def test_big_layout_is_tidy_and_deterministic(name):
     assert len(g["routes"]) == len(edges) and all(len(r) == 2 for r in g["routes"])
 
 
+def _bfs_hops(n, edges):
+    """The plain breadth-first hop counts that figures._hops replaced (v2.10)."""
+    adj = [[] for _ in range(n)]
+    for a, b in edges:
+        adj[a].append(b)
+        adj[b].append(a)
+    D = np.full((n, n), np.inf)
+    for s in range(n):
+        D[s, s], todo = 0, [s]
+        while todo:
+            nxt = []
+            for i in todo:
+                for j in adj[i]:
+                    if D[s, j] == np.inf:
+                        D[s, j] = D[s, i] + 1
+                        nxt.append(j)
+            todo = nxt
+    return D
+
+
+def test_hop_counts_are_breadth_first_hops_and_islands_sit_apart():
+    _, edges = _layout(_mp("case118"))
+    edges = edges + [(118, 119), (119, 120)]          # a 3-bus island
+    D = figures._hops(121, edges)
+    plain = _bfs_hops(121, edges)
+    fin = np.isfinite(plain)
+    assert np.array_equal(D[fin], plain[fin]) and (D[~fin] == plain[fin].max() + 2).all()
+
+
+def _plain_step(X, D):
+    """The textbook Guttman step: pinv(V) B(X) X with an SVD pseudo-inverse."""
+    n = len(D)
+    W = np.where(D > 0, 1.0 / np.where(D > 0, D, 1) ** 2, 0.0)
+    V = np.diag(W.sum(axis=1)) - W
+    dist = np.linalg.norm(X[:, None] - X[None], axis=-1)
+    B = -W * D / np.where(dist > 0, dist, 1)
+    np.fill_diagonal(B, 0.0)
+    np.fill_diagonal(B, -B.sum(axis=1))
+    return np.linalg.pinv(V) @ (B @ X)
+
+
+@pytest.mark.parametrize("name", ["case30", "case118"])
+def test_a_stress_step_is_the_textbook_guttman_transform(name):
+    g, edges = _layout(_mp(name))
+    n = len(g["cx"])
+    D = figures._hops(n, edges)
+    X = figures._stress(D, iters=5)                    # past the start, no two buses on one spot
+    WD, Vp = figures._majorizer(D)
+    assert np.allclose(figures._smacof(X, WD, Vp), _plain_step(X, D), rtol=1e-9, atol=1e-9)
+
+
+def _stress_value(X, D):
+    i, j = np.triu_indices(len(D), 1)
+    return np.sum((np.linalg.norm(X[i] - X[j], axis=1) - D[i, j]) ** 2 / D[i, j] ** 2)
+
+
+def test_the_stress_layout_lowers_the_stress_and_keeps_its_shape_when_buses_are_renumbered():
+    from scipy.spatial.distance import pdist
+    _, edges = _layout(_mp("case118"))
+    D = figures._hops(118, edges)
+    start, X = figures._stress(D, iters=0), figures._stress(D)
+    assert _stress_value(X, D) < 0.5 * _stress_value(start, D)
+    # v2.10: buses that start on one spot are parted by a fixed nudge, not by
+    # round-off, so the drawing does not hinge on bus order or on the BLAS used
+    Xb = figures._stress(D[::-1, ::-1])[::-1]          # buses in reverse order
+    assert np.abs(pdist(X) - pdist(Xb)).max() < 1e-3   # the same shape (distances about 6)
+
+
+def test_the_layout_of_a_big_case_takes_seconds():
+    import time
+    case = _mp("case1354pegase")
+    t = time.perf_counter()
+    g, _ = _layout(case)
+    assert len(g["cx"]) == 1354 and time.perf_counter() - t < 20   # v2.9: 27 s, v2.10: 4 s
+
+
 def test_small_networks_keep_the_layered_drawing():
     bus, lines = gridcore.CASES["5-bus (demo)"]
     edges = [(int(a) - 1, int(b) - 1) for a, b in zip(lines["From"], lines["To"])]

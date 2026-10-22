@@ -1,4 +1,4 @@
-# Notes for the next session (v2.9: phase 2, jobs and fast N-1 done)
+# Notes for the next session (v2.10: phase 2, jobs, fast N-1 and fast layout done)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -87,12 +87,13 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   lean one (base factors for the first step + chord, one kept ordering) already passed the gate
   by 6x with identical tables, so the others were not built. A process pool would add little and
   is awkward inside the server (fork from a thread).
-- Found in v2.8: the layout of case2383wp takes ~145 s CPU on one core (300 dense stress
-  iterations, 0.43 s each; hops 4.6 s, MDS eigh 3.4 s, pinv 7 s), and while it runs it slows the
-  study job (same process). Next version: a faster layout (same algorithm, vectorised:
-  precomputed W*D, no (n, n, 2) temporaries, csgraph BFS, eigh-based pinv; or a sparse
-  stress layout), result must stay the same positions within round-off or be approved.
-- Version numbering: after v2.9 the 0.1 rule gives v3.0; ask the user whether "v2.10" or "v3.0".
+- v2.10: fast layout, same algorithm: case2383wp 12 s in the server (2.5 min before), 1354pegase
+  4 s. Positions differ from v2.9, which itself was not reproducible (every bus moved with the
+  BLAS thread count); a fixed nudge makes v2.10 reproducible across BLAS set-ups. 257 tests.
+  Still slow-ish: 300 dense SMACOF steps at ~35 ms; a sparse stress layout (pivot MDS, stress on
+  near pairs only) would be faster but draws differently: ask first.
+- Version numbering: the user did not choose between v3.0 and v2.10 after v2.9; v2.10 was used
+  (the major number follows the v2 design). Rename the branch if the user prefers v3.0.
 - Session notes (2026-10-22): max-effort agents burned the user's usage limit (twice); the user
   asked to stop using agents ("its eating my tokens"). Do not start workflows or agents unless the
   user asks again; work inline.

@@ -253,7 +253,8 @@ def test_layout_progress_follows_the_stress_layout_and_changes_nothing(case118):
     g = figures.layout(len(b), edges, b, progress=lambda s, d, t: seen.append((s, d, t)))
     assert list(dict.fromkeys(s for s, _, _ in seen)) == ["Hop distances", "Starting positions",
                                                          "Stress layout"]
-    assert [d for s, d, _ in seen if s == "Hop distances"] == list(range(len(b)))
+    assert [(d, t) for s, d, t in seen if s == "Hop distances"] == [(0, 1)]   # one C call (v2.10)
+    assert [d for s, d, _ in seen if s == "Stress layout"] == list(range(len(seen) - 2))
     assert to_json(g) == to_json(figures.layout(len(b), edges, b))
 
     def stop(stage, done, total):

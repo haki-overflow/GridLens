@@ -23,6 +23,12 @@ Gate passed: case2383wp load flow 0.07 s (was 47.5 s); ten MATPOWER cases (case9
 MATPOWER's runpf / rundcpf to round-off (|V| 2e-12 pu, angles 1e-10 deg), every generator's P and Q
 too (tests/test_reference.py).
 
+## Phase 2 progress (2026-10-22)
+v2.7 teaching size limit (30 buses); v2.8 background jobs with progress and cancel (study, layout);
+v2.9 fast exact N-1: all 2,896 outages of case2383wp in about 20 s (37 s with Q limits), the same
+table as the plain re-solve (gate: under 2 minutes, passed). Open: generator outages, continuation
+power flow, IEC 60909, a faster layout.
+
 ## Blockers
 1. Dense engine (above). 2. Data model: generators, loads, shunts are bus columns; transformers are
 lines with a tag. 3. Validation rejects negative X. 4. Install needs Python, Node and a terminal.

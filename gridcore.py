@@ -5,16 +5,17 @@ run_study  load flow + method comparison + N-1 + P-V curve -> results dict
 outage     load flow with one line removed
 
 app.py (Streamlit) and api/server.py (FastAPI) both call these; the maths
-itself lives in solver.py, studies.py and qlimits.py.
+itself lives in solver.py, studies.py, n1.py and qlimits.py.
 """
 import numpy as np
 import pandas as pd
 
 import model
+import n1 as fastn1
 from solver import islands as _islands
 from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
-from studies import branch_names, contingency, pv_curve
+from studies import branch_names, pv_curve
 from topics import case_to_pu
 from working import TEACH_MAX
 from studies import outage as _outage
@@ -337,7 +338,7 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
                                          "Loss (MW)", "Min V (pu)"])
     if any(notes):
         cmp_df["Note"] = notes
-    n1 = contingency(b, l, vmin, vmax, base, qlim, lambda d, t: say(STAGES[2], d, t))
+    n1 = fastn1.contingency(b, l, vmin, vmax, base, qlim, lambda d, t: say(STAGES[2], d, t))
     loading = line_loading(flows, l, base)
     n1_text = n1 if (n1["Overloads"].fillna(0) > 0).any() else \
         n1.drop(columns=["Overloads", "Lines overloaded"])

@@ -1,4 +1,4 @@
-# Notes for the next session (v2.8: phase 2, jobs done)
+# Notes for the next session (v2.9: phase 2, jobs and fast N-1 done)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -73,46 +73,38 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
 
 - v2.7: teaching size TEACH_MAX = 30 buses (GS skipped in the method check, Show working refused,
   no dense Zbus in /api/fault above it). 198 tests. Review workflow ran on the diff (fixes follow).
-- Fast N-1 baseline: 50 ms per outage on case2383wp (all 2,896 ~145 s), 70% SuperLU factorisation.
-  A design workflow prototyped lean-Newton / factorisation-reuse / screen+parallel options in
-  the scratchpad (n1/); its benchmark decides v2.9.
-
-- The first run of workflow "design-fast-n1" (wf_f00bdf11-0fb) died with /clear before any
-  result: a workflow only resumes in the session that launched it. Never /clear while one runs.
-- 2026-10-22 15:30 UTC: the usage limit stopped both workflows (design-fast-n1 and review-v28)
-  with no results; after the restart the Workflow tool was off, so the same plan runs as six
-  background agents (effort max): prototypes lean/, reuse/ (continuing their own files) and
-  screen/ in the n1 scratch below, and three v2.8 reviewers (Python, web, callers/docs/tests;
-  scripts in scratchpad/review28/). Their reports reach only the session that started them: after
-  a /clear, rerun from the files on disk (n1/*/proto.py, n1/bench.py if any). n1/ref.py is making
-  reference_qlim.pkl again (it was killed at a time limit; reference.pkl is done).
-- Earlier (2026-10-22, session a5b7a850): "design-fast-n1" rerun wf_314ef0c9-14f, agents at
-  effort max (the user asked for ultracode / max). Scratch:
-  /tmp/claude-0/-home-user/a5b7a850-f9b9-4e44-bf19-1dc1368ade9e/scratchpad/n1/ (lean/, reuse/,
-  screen/ prototypes, lean_old/ and reuse_old/ from the first run, ref.py -> reference.pkl and
-  reference_qlim.pkl = the exact N-1 of case2383wp, bench.py, final/proto.py = the merged winner,
-  verify1/, verify2/). Results: "result" lines of
-  /root/.claude/projects/-home-user/a5b7a850-f9b9-4e44-bf19-1dc1368ade9e/subagents/workflows/wf_314ef0c9-14f/journal.jsonl
-  (prototypes, benchmark, three judges, synthesis with a v2.9 integration plan, two verifiers).
-  If lost, re-read those files or rerun bench.py on final/proto.py before redesigning.
 - v2.8: background jobs (jobs.py; /api/jobs start / poll / cancel; kinds "study" and "layout",
   one at a time per kind, kinds in parallel; web: Run becomes Stop with stage, count and time left,
-  layout chip on the canvas). 219 tests. Browser check (scratchpad jobcheck.py): progress, Stop,
-  a new case stopping the study and the layout, case300 full study 10 s.
+  layout chip on the canvas). The v2.8 review found and fixed: a finished study could be pruned
+  before its result was fetched (KEEP counted live jobs), a layout job replaced before its id
+  was known kept running, and tests that did not prove Stop reaches the work.
+- v2.9: fast exact N-1 (n1.py). Phase 2 gate passed: all 2,896 outages of case2383wp in about 20 s
+  (166 s before), 37 s with Q limits (58 min before); the whole study on case2383wp 23 s as a
+  job. Same table as studies.contingency (kept as the plain definition and the test oracle):
+  tests/test_n1.py (live on small cases and edge cases, stored tables tests/data/n1_*.csv.gz made
+  by tools/make_n1_reference.py, the gate). 252 tests (+1 with GRIDLENS_BIG=1). Design: three
+  prototypes were planned (lean Newton, factorisation reuse, DC screening + process pool); the
+  lean one (base factors for the first step + chord, one kept ordering) already passed the gate
+  by 6x with identical tables, so the others were not built. A process pool would add little and
+  is awkward inside the server (fork from a thread).
 - Found in v2.8: the layout of case2383wp takes ~145 s CPU on one core (300 dense stress
   iterations, 0.43 s each; hops 4.6 s, MDS eigh 3.4 s, pinv 7 s), and while it runs it slows the
-  study job (same process). A faster layout is its own version (same algorithm, vectorised:
-  precomputed W*D, no (n, n, 2) temporaries, csgraph BFS, eigh-based pinv), after the fast N-1.
-- Plan: v2.9 the winning fast N-1, then the fast layout.
+  study job (same process). Next version: a faster layout (same algorithm, vectorised:
+  precomputed W*D, no (n, n, 2) temporaries, csgraph BFS, eigh-based pinv; or a sparse
+  stress layout), result must stay the same positions within round-off or be approved.
+- Version numbering: after v2.9 the 0.1 rule gives v3.0; ask the user whether "v2.10" or "v3.0".
+- Session notes (2026-10-22): max-effort agents burned the user's usage limit (twice); the user
+  asked to stop using agents ("its eating my tokens"). Do not start workflows or agents unless the
+  user asks again; work inline.
 
 ## Next: Phase 2, studies and jobs (docs/design-v2.md; one version bump per change, v2.7 on)
-Gate: all 2,896 branch outages of case2383wp in under 2 min; IEC TR 60909-4 examples match.
+Gate: all 2,896 branch outages of case2383wp in under 2 min (passed in v2.9); IEC TR 60909-4 examples match.
 Suggested order:
 1. (done in v2.7) Teaching methods only up to 30 buses: Gauss-Seidel and Show working.
 2. (done in v2.8) Jobs: long studies (N-1, P-V) as background jobs with progress and cancel
    (polling; web progress instead of a frozen Run). Layout progress too.
-3. Fast N-1: DC screening with PTDF / LODF from solver.dc_model, then AC (studies.outage) only for
-   the outages that screen as bad or islanding; generator outages; transformers as their own kind.
+3. (done in v2.9) Fast N-1. Still open: generator outages; transformers as their own kind (now lines
+   with Kind trafo in the same table).
 4. Continuation power flow with Q limits (PV / QV curves); check the noses of IEEE 14 / 118.
 5. IEC 60909 short circuit on the sparse Ybus (sparse LU, not inv): all buses < 1 s on
    case2383wp; IEC TR 60909-4 examples.

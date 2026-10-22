@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 import model
+from solver import islands as _islands
 from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
 from studies import branch_names, contingency, pv_curve
@@ -150,28 +151,6 @@ def prep_case(bus_df, lines_df, cfg):
         probs.append("There are no lines: add at least one line between two "
                      "buses.")
     return b, l, probs, notes
-
-
-def _islands(n, l):
-    """Groups of bus indices joined by in-service branches (to valid buses)."""
-    adj = [[] for _ in range(n)]
-    on = l["InService"] if "InService" in l else [1] * len(l)
-    for f, t, s in zip(l["From"].to_numpy(dtype=int), l["To"].to_numpy(dtype=int), on):
-        if s and 1 <= f <= n and 1 <= t <= n:
-            adj[f - 1].append(t - 1)
-            adj[t - 1].append(f - 1)
-    left, out = set(range(n)), []
-    while left:
-        start = min(left)
-        seen, todo = {start}, [start]
-        while todo:
-            for nb in adj[todo.pop()]:
-                if nb not in seen:
-                    seen.add(nb)
-                    todo.append(nb)
-        out.append(sorted(seen))
-        left -= seen
-    return out
 
 
 def _list(isl):
@@ -335,11 +314,13 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
                      round(r2["V (pu)"].min(), 4)])
     cmp_df = pd.DataFrame(rows, columns=["Method", "Converged", "Iterations",
                                          "Loss (MW)", "Min V (pu)"])
-    n1 = contingency(b, l, vmin, vmax, base)
+    n1 = contingency(b, l, vmin, vmax, base, qlim)
     loading = line_loading(flows, l, base)
     n1_text = n1 if (n1["Overloads"].fillna(0) > 0).any() else \
         n1.drop(columns=["Overloads", "Lines overloaded"])
-    pv = pv_curve(b, l)
+    if not (n1["Status"] == "ISLANDED").any():
+        n1_text = n1_text.drop(columns=["Lost load (MW)", "Buses cut off"])
+    pv = pv_curve(b, l, qlim=qlim)
     loss = flows["Loss_P"].sum() * base
     load = b["Pd"].sum() * base
     k = int(np.where(b["Type"].values == "Slack")[0][0])
@@ -388,16 +369,10 @@ def solve_case(case, method="Newton-Raphson", tol=1e-8, qlim=False, init="flat",
                 hist=hist, attempts=attempts, hint=hint, notes=notes, qlog=qlog)
 
 
-def outage(b, l, k):
-    """Re-solve the case with line k removed: (res, flows, ok, hist). Raises a
-    plain-language ValueError when the outage cuts buses off from every Slack."""
-    rest = l.drop(l.index[k]).reset_index(drop=True)
-    for isl in _islands(len(b), rest):
-        if not any(b["Type"].iloc[i] == "Slack" for i in isl):
-            raise ValueError(f"taking line {int(l['From'].iloc[k])}-{int(l['To'].iloc[k])} "
-                             f"out cuts buses {_list(isl)} off from every Slack bus "
-                             "(they lose supply), so there is no load flow to show.")
-    return _outage(b, l, k)
+def outage(b, l, k, qlim=False):
+    """Re-solve the case with line k removed: (res, flows, ok, hist, cut) as
+    studies.outage (buses cut off from every Slack get V = 0 and no flow)."""
+    return _outage(b, l, k, qlim)
 
 # ============================================================================
 # Preset cases

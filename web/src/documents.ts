@@ -205,18 +205,26 @@ resultsDoc("solver-check", "Do the 3 methods agree?", "The same case through all
 // --------------------------------------------------------------- contingency
 resultsDoc("contingency", "If a line fails (N-1)", "Each line removed in turn, case re-solved, ranked worst first.",
   (el, r) => {
-    const bad = r.n1.filter((x) => x.Status !== "OK" || n(x.Violations) > 0);
+    // insecure: no solution, load cut off, or a voltage outside the limits
+    const insecure = (x: Rec) => x.Status === "FAILED" || n(x["Lost load (MW)"]) > 0 || n(x.Violations) > 0;
+    const bad = r.n1.filter(insecure);
     const w = r.n1[0];
     if (w) {
-      el.append(headline(w.Status !== "OK"
-        ? `Worst outage: line ${w.Outage} leaves the case with no solution. ${bad.length} of ${r.n1.length} outages insecure.`
-        : `Worst outage: line ${w.Outage} → min |V| ${fmt(w["Min V (pu)"], 3)} pu at bus ${w["At bus"]}. ${bad.length} of ${r.n1.length} outages insecure.`,
+      const tail = `${bad.length} of ${r.n1.length} outages insecure.`;
+      el.append(headline(w.Status === "FAILED"
+        ? `Worst outage: line ${w.Outage} leaves the case with no solution. ${tail}`
+        : n(w["Lost load (MW)"]) > 0
+          ? `Worst outage: line ${w.Outage} cuts off bus ${w["Buses cut off"]} (${fmt(w["Lost load (MW)"], 1)} MW of load lost). ${tail}`
+          : `Worst outage: line ${w.Outage} → min |V| ${fmt(w["Min V (pu)"], 3)} pu at bus ${w["At bus"]}. ${tail}`,
       bad.length ? "bad" : "ok"));
     }
     const rated = r.n1.some((x) => n(x.Overloads) > 0);
-    const tbl = table(r.n1, { bad: (x) => x.Status !== "OK" || n(x.Violations) > 0 || n(x.Overloads) > 0,
+    const cuts = r.n1.filter((x) => x.Status === "ISLANDED");
+    const lostMax = Math.max(0, ...cuts.map((x) => n(x["Lost load (MW)"])));
+    const tbl = table(r.n1, { bad: (x) => insecure(x) || n(x.Overloads) > 0,
       cols: ["Outage", "Status", "Violations", "Min V (pu)", "At bus", "Loss (pu)", "Buses violating",
-        ...(rated ? ["Overloads", "Lines overloaded"] : [])] });
+        ...(rated ? ["Overloads", "Lines overloaded"] : []),
+        ...(cuts.length ? ["Lost load (MW)", "Buses cut off"] : [])] });
     const seen: Record<string, number> = {};
     const lines = (getState().case?.lines ?? []).map((l) => {   // the server's branch names
       const key = `${l.From}-${l.To}`;
@@ -233,13 +241,16 @@ resultsDoc("contingency", "If a line fails (N-1)", "Each line removed in turn, c
         navigate("canvas");
       });
     });
-    const ok = r.n1.filter((x) => x.Status === "OK");
+    const ok = r.n1.filter((x) => x.Status !== "FAILED");
     const worst = [...ok].sort((a, b) => n(a["Min V (pu)"]) - n(b["Min V (pu)"])).slice(0, 24);
     const [left, right] = cols2(el);
     left.append(cards([
       ["Outages studied", String(r.n1.length)],
-      ["Insecure", String(bad.length), "voltage limits or no solution", bad.length > 0],
-      ["No solution", String(r.n1.length - ok.length), "islanded or diverged", r.n1.length > ok.length],
+      ["Insecure", String(bad.length), "no solution, lost load or voltage limits", bad.length > 0],
+      ["No solution", String(r.n1.length - ok.length), "diverged", r.n1.length > ok.length],
+      ...(cuts.length ? [["Cut buses off", String(cuts.length), lostMax > 0
+        ? `up to ${fmt(lostMax, 1)} MW of load lost` : "no load lost", lostMax > 0] as
+        [string, string, string, boolean]] : []),
       ...(rated ? [["With overloads", String(r.n1.filter((x) => n(x.Overloads) > 0).length), "", true] as
         [string, string, string, boolean]] : []),
     ]), h("p", "cap", "Click a row below to show that outage on the diagram (the tripped line is dashed)."));

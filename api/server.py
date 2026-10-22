@@ -32,7 +32,7 @@ from .schema import complex_in, frame, to_json
 
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
-app = FastAPI(title="GridLens API", version="2.4",
+app = FastAPI(title="GridLens API", version="2.5",
               description="Load flow, N-1, faults and textbook tools as JSON.")
 
 
@@ -263,9 +263,12 @@ def outage(k: int, case: Case):
     b, l, _ = _prep(case)
     if not 0 <= k < len(l):
         raise Problems([f"Line index k must be 0 to {len(l) - 1} (row order)."])
-    res, flows, ok, hist = _guard(lambda: gridcore.outage(b, l, k), "Outage")
+    res, flows, ok, hist, cut = _guard(lambda: gridcore.outage(b, l, k, case.settings.qlim),
+                                       "Outage")
     return {"line": f"{int(l['From'][k])}-{int(l['To'][k])}", "res": to_json(res),
-            "flows": to_json(flows), "ok": bool(ok), "hist": to_json(hist)}
+            "flows": to_json(flows), "ok": bool(ok), "hist": to_json(hist),
+            "cut_off": [int(i) + 1 for i in cut],
+            "lost_load": float(b["Pd"].to_numpy(float)[cut].sum() * case.settings.base)}
 
 
 @app.post("/api/fault")

@@ -89,9 +89,9 @@ def test_layout(case, prepped):
 
 def test_outage(case, prepped):
     out = post("/api/outage/0", case)
-    res, flows, ok, hist = gridcore.outage(*prepped, 0)
+    res, flows, ok, hist, cut = gridcore.outage(*prepped, 0)
     assert out["res"] == to_json(res) and out["flows"] == to_json(flows)
-    assert out["ok"] == ok
+    assert out["ok"] == ok and out["cut_off"] == [] and out["lost_load"] == 0
     assert client.post("/api/outage/99", json=case).status_code == 422
 
 

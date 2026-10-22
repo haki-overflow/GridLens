@@ -1,4 +1,4 @@
-# Notes for the next session (v2.4)
+# Notes for the next session (v2.5)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -54,8 +54,13 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   still says "bus rows", e.g. outage messages on imported cases name rows, not file numbers);
   readers for CDF / CSV straight to the model.
 
+- v2.5: N-1 and the P-V curve use generator Q limits when qlim is on; an outage that cuts buses
+  off from every Slack solves the rest (Status ISLANDED, Lost load (MW), Buses cut off), also in
+  /api/outage and the canvas (greyed buses, chip). Golden snapshots: only the IEEE 14 7-8 row
+  changed (FAILED -> ISLANDED, 0 MW lost: bus 8 is a synchronous condenser); regenerated as a
+  planned change and reported to the user. 165 tests pass.
+
 ## Next: Phase 1, engine v2 (do in this order, one version bump per change)
-5. Q limits in N-1 and PV curve; N-1 drops isolated buses and reports lost load.
 6. Reference suite: MATPOWER case9, 14, 30, 39, 57, 118, 300, 1354pegase, 2383wp vs published
    solutions (stored Vm/Va where valid, runpf values for case9/case14) in tests/.
 Gate: case2383wp under 1 s; all reference cases match.

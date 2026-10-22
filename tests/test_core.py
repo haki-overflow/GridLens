@@ -3,7 +3,7 @@ tests/data/core_golden.pkl holds res, flows, ok, iterations, cmp, n1 and pv
 for both presets with default settings and with generator Q limits on. It was
 taken from app._study at 52e819d (before the move-only refactor) and
 regenerated at v2.1 (sparse Newton-Raphson, every value within 1e-13 of the
-old one). Regenerate (only after an approved maths change):
+old one) and v2.5 (N-1 solves islanding outages: the IEEE 14 7-8 row). Regenerate (only after an approved maths change):
 GOLDEN_WRITE=1 pytest tests/test_core.py"""
 import os
 import pickle
@@ -50,8 +50,8 @@ def test_run_study_matches_previous_app(name, qlim):
 
 def test_outage_is_the_case_without_that_line():
     b, l, _, _ = gridcore.prep_case(*CASES["5-bus (demo)"], CFG)
-    res, flows, ok, _ = gridcore.outage(b, l, 0)
-    assert ok and len(flows) == len(l) - 1
+    res, flows, ok, _, cut = gridcore.outage(b, l, 0)
+    assert ok and len(flows) == len(l) - 1 and len(cut) == 0
 
 
 def _probs(bus, lines):

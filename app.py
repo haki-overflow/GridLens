@@ -301,7 +301,7 @@ def _study(b, l, method, tol, base, vmin, vmax, qlim=False):
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def _outage(b, l, k):
-    return gridcore.outage(b, l, k)
+    return gridcore.outage(b, l, k)[:4]
 
 
 @st.cache_data(show_spinner=False, max_entries=32)

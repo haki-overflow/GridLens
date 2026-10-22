@@ -168,7 +168,7 @@ registerDoc("canvas", (el) => {
   svg.call(zoom).on("dblclick.zoom", null);
 
   // ---- overlays: tool group, view options, chips, hint ----
-  interface OutageData { k: number; sig: string | null; res: Rec[]; flows: Rec[] }
+  interface OutageData { k: number; sig: string | null; res: Rec[]; flows: Rec[]; cut: number[]; lost: number }
   let outageData: OutageData | null = null;
   let outageAsked = "";
   const tools = h("div", "canvas-tools");
@@ -311,7 +311,8 @@ registerDoc("canvas", (el) => {
     const flowRows = od ? od.flows : fresh?.flows;
     if (fresh && s.outage !== null) {
       const l = c.lines[s.outage];
-      chip.textContent = `Outage: line ${l?.From}-${l?.To} tripped${od ? "" : " (solving...)"} - click to clear`;
+      const cut = od?.cut.length ? ` - bus ${od.cut.join(", ")} cut off (${od.lost.toFixed(1)} MW of load lost)` : "";
+      chip.textContent = `Outage: line ${l?.From}-${l?.To} tripped${od ? cut : " (solving...)"} - click to clear`;
       chip.hidden = false;
     } else chip.hidden = true;
 
@@ -347,7 +348,7 @@ registerDoc("canvas", (el) => {
       const x = G.cx[i]!, y = G.cy[i]!, w = G.w[i]!;
       const xl = X(x - w / 2), xr = X(x + w / 2), yy = Y(y);
       const res = resRows?.[i];
-      const v = res ? Number(res["V (pu)"]) : NaN;
+      const v = res && !od?.cut.includes(i + 1) ? Number(res["V (pu)"]) : NaN;   // cut off: grey
       const colour = Number.isFinite(v) ? BAND(v, fresh!.vmin, fresh!.vmax) : "var(--muted)";
       const isSel = sel?.kind === "bus" && sel.index === i;
       gBus.append("line").attr("class", "bar-line").attr("x1", xl).attr("x2", xr)
@@ -564,8 +565,8 @@ registerDoc("canvas", (el) => {
     if (key === outageAsked) return;
     outageAsked = key;
     const k = s.outage, sig = s.solvedSig;
-    post<{ res: Rec[]; flows: Rec[] }>(`/api/outage/${k}`, s.case).then((o) => {
-      outageData = { k, sig, res: o.res, flows: o.flows };
+    post<{ res: Rec[]; flows: Rec[]; cut_off: number[]; lost_load: number }>(`/api/outage/${k}`, s.case).then((o) => {
+      outageData = { k, sig, res: o.res, flows: o.flows, cut: o.cut_off ?? [], lost: o.lost_load ?? 0 };
       schedule();
     }).catch((e) => report(e, "The outage case"));
   };

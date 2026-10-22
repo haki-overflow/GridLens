@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import splu
 
 METHODS = ["Newton-Raphson", "Fast Decoupled", "Gauss-Seidel"]
@@ -19,6 +20,21 @@ def _on(lines):
     if "InService" not in lines:
         return np.ones(len(lines), bool)
     return lines["InService"].fillna(1).astype(float).to_numpy() != 0
+
+
+def islands(n, lines):
+    """Groups of bus rows (0-based, ascending) joined by in-service branches
+    between existing buses, ordered by their first bus."""
+    f, t = (pd.to_numeric(lines[c], errors="coerce").to_numpy(float) - 1
+            for c in ("From", "To"))
+    use = _on(lines) & (f >= 0) & (f < n) & (t >= 0) & (t < n)
+    A = sp.coo_array((np.ones(int(np.sum(use))), (f[use].astype(int), t[use].astype(int))),
+                     shape=(n, n))
+    _, label = connected_components(A, directed=False)
+    groups = {}
+    for i, g in enumerate(label):
+        groups.setdefault(g, []).append(i)
+    return sorted(groups.values())
 
 
 def branch_y(l):

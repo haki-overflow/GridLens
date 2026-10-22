@@ -358,3 +358,57 @@ def test_zero_sequence_reactance_is_a_plain_error():
                        "X0": [0.0], "Conn From": ["Yg"], "Conn To": ["Yg"]})
     with pytest.raises(ValueError, match="a sequence reactance is 0"):
         topics.seq_ybus(2, gens, br, 1)
+
+
+# ------------------------------------------- v2.5: Q limits in N-1 and P-V; lost load
+import studies  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from api.server import app  # noqa: E402
+from api.schema import to_json  # noqa: E402
+from solver import solve_with_qlimits  # noqa: E402
+
+
+def test_n1_and_pv_curve_respect_generator_q_limits():
+    # Qmax 0.3 pu at bus 2 does not bind in the base case (0.15 pu needed) but does after
+    # line 1-2 trips: with limits the N-1 row is the Q-limited load flow of that outage
+    bus = B5.assign(Qmin=[None, -1.0, None, None, None], Qmax=[None, 0.3, None, None, None])
+    b, l, probs, _ = _prep(bus, L5, qlim=True)
+    free = studies.contingency(b, l, 0.95, 1.10).set_index("Outage")
+    held = studies.contingency(b, l, 0.95, 1.10, qlim=True).set_index("Outage")
+    res = solve_with_qlimits(b, l.drop(index=0).reset_index(drop=True))[0]
+    assert held.loc["1-2", "Min V (pu)"] == round(res["V (pu)"].min(), 4)
+    assert held.loc["1-2", "Min V (pu)"] < 0.9 < free.loc["1-2", "Min V (pu)"]
+    assert held.index[0] == "1-2"                       # now the worst outage
+    assert studies.pv_curve(b, l, qlim=True)[1] < studies.pv_curve(b, l)[1] - 1
+
+
+def _radial():
+    """5-bus demo plus bus 6 (25 MW load) fed only by line 5-6."""
+    bus = pd.concat([B5, pd.DataFrame([dict(Type="PQ", V=1.0, Pg=0.0, Qg=0.0, Pd=0.25,
+                                            Qd=0.05, Bs=0.0)])], ignore_index=True)
+    lines = pd.concat([L5, pd.DataFrame([dict(From=5, To=6, R=0.02, X=0.08, B=0.0,
+                                              Tap=1.0)])], ignore_index=True)
+    return _prep(bus, lines)[:2]
+
+
+def test_n1_outage_that_cuts_off_a_bus_reports_lost_load():
+    b, l = _radial()
+    n1 = studies.contingency(b, l, 0.95, 1.10)
+    row = n1.iloc[0]                                    # lost load ranks first
+    assert (row["Outage"], row["Status"], row["Lost load (MW)"], row["Buses cut off"]) == \
+        ("5-6", "ISLANDED", 25.0, "6")
+    base, *_ = solve_loadflow(B5, L5)
+    assert row["Min V (pu)"] == round(base["V (pu)"].min(), 4)      # the rest is the 5-bus case
+    assert (n1["Lost load (MW)"].iloc[1:] == 0).all() and (n1["Status"].iloc[1:] == "OK").all()
+    res, flows, ok, _, cut = gridcore.outage(b, l, 7)
+    assert ok and list(cut) == [5] and res["V (pu)"].iloc[5] == 0.0
+    assert np.allclose(res["V (pu)"].iloc[:5], base["V (pu)"], atol=1e-12)
+    assert len(flows) == 7 and np.allclose(flows["P_ij"], solve_loadflow(B5, L5)[1]["P_ij"])
+
+
+def test_api_outage_shows_the_buses_cut_off():
+    b, l = _radial()
+    case = {"bus": to_json(b), "lines": to_json(l), "settings": {"taps": True, "shunts": True}}
+    out = TestClient(app).post("/api/outage/7", json=case).json()
+    assert out["ok"] and out["cut_off"] == [6] and out["lost_load"] == pytest.approx(25.0)
+    assert out["res"][5]["V (pu)"] == 0.0

@@ -19,9 +19,10 @@ Built for Hacktoberfest, so everything must use open-weight models and open-sour
 ## Layout (v1.3: few files, each with one job)
 ```
 solver.py      METHODS, build_ybus (dense, for teaching), branch_admittances,
-               ybus_sparse (the engine's Ybus), newton_raphson (sparse),
-               fast_decoupled, gauss_seidel, solve_loadflow, branch_flows;
-               solve_with_qlimits (PV -> PQ switching)
+               ybus_sparse (the engine's Ybus), newton_raphson and
+               fast_decoupled (sparse), gauss_seidel (dense), solve_loadflow,
+               branch_flows; dc_model, dc_loadflow; solve_with_qlimits
+               (PV -> PQ switching)
 studies.py     contingency (N-1), outage (one line out), pv_curve (load
                scaling to the nose), fault_analysis (3-phase, Zbus)
 working.py     ybus_parts, gauss_seidel_trace (alpha), newton_trace (analytical
@@ -73,8 +74,9 @@ The original single-file version lives in `legacy/power_flow_methods.py`.
 
 ## Methods
 - Newton-Raphson (v2.1: sparse, analytical Jacobian as MATPOWER's newtonpf, one sparse LU per iteration; `working.newton_trace` shows the same steps with dense J1..J4)
-- Fast Decoupled (XB version: B' from series X, B'' from Ybus imaginary part)
-- Gauss-Seidel (PV buses: Q recomputed each sweep, |V| held at setpoint)
+- Fast Decoupled (XB version: B' from series X, B'' from Ybus imaginary part; v2.2: sparse, each factorised once)
+- Gauss-Seidel (PV buses: Q recomputed each sweep, |V| held at setpoint; dense, for teaching)
+- DC load flow (v2.2, `solver.dc_loadflow`, not in `METHODS`): MATPOWER's makeBdc model (b = 1/(X a), phase shifts as injections, Gs as load at V = 1), one sparse solve; same return shape as `solve_loadflow` with V = 1, Q = 0 and no losses. For phase 2 screening (PTDF, LODF); not in the UI yet.
 
 ## Run
 ```
@@ -94,7 +96,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 2. (fixed in v1.3) `ai_report` now raises on HTTP errors.
 3. (fixed in v1.6) Fault kA uses each bus's own base kV where the case has one (the input is the default for the rest).
 4. (fixed in v2.1) Newton-Raphson uses the sparse analytical Jacobian: case2383wp solves in about 50 ms (47 s before). Results moved by at most 1.2e-12, and the golden snapshots were regenerated with the user's OK. The full study on big cases is still slow (N-1 and the P-V curve re-solve once per outage / step, and the 3-method check runs dense Gauss-Seidel); that is phase 2.
-7. MATPOWER divides a transformer's charging by tap²; GridLens keeps B/2 unscaled at both ends (only differs for a tapped branch with B > 0).
+7. MATPOWER divides a transformer's From-side charging by tap²; GridLens keeps B/2 unscaled at both ends (only differs for a tapped branch with B ≠ 0: case300 and case2383wp have such branches, with negative B). To be fixed in the reference-suite step (v2 phase 1).
 5. PV Q limits are optional (`solver.solve_with_qlimits`, default off) and apply to the main load flow only, not to N-1 / P-V / the solver check.
 6. Sequence networks are reactance-only; Δ-Y 30° phase shifts are not modelled.
 
@@ -109,7 +111,7 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - Theme: dark only. Colours live in `theme.css` `:root`; `ui.py` injects it and `figures.py` sets matplotlib/Plotly styles from it; `.streamlit/config.toml` is `base = "dark"` with the same colours. One accent, `--accent` #3B82F6 (active page, primary buttons, selected options, focus); `--hazard` #F2B705 rules the header; red/amber only for violations and STALE. Run `tools/check_contrast.py` after colour changes (AA 4.5:1). Keep app.py free of styling.
 
 ## Testing
-- `venv/bin/python -m pytest` (tests/): per unit, Q limits (identical results with no binding limit), Ybus terms and symmetry, analytical vs numerical Jacobian, sparse Ybus = dense Ybus and the sparse Jacobian vs central differences (`test_engine.py`), every trace ends on the solver's answer, GS/NR/FD agree within 1e-4 pu, SLG = 3Vf/(Z1+Z2+Z0+3Zf) and LL/DLG boundary conditions, dispatch, ABCD reciprocity.
+- `venv/bin/python -m pytest` (tests/): per unit, Q limits (identical results with no binding limit), Ybus terms and symmetry, analytical vs numerical Jacobian, sparse Ybus = dense Ybus and the sparse Jacobian vs central differences, FD ends where NR does, DC balance and islands (`test_engine.py`), DC closed forms (`test_textbook.py`), every trace ends on the solver's answer, GS/NR/FD agree within 1e-4 pu, SLG = 3Vf/(Z1+Z2+Z0+3Zf) and LL/DLG boundary conditions, dispatch, ABCD reciprocity.
 - Textbook worked examples go in `tests/test_textbook.py` with the book's data and its printed precision.
 - After any refactor, run a comparison script that asserts old and new outputs match exactly.
 
@@ -144,3 +146,5 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 ## v2: engine (plan in docs/design-v2.md)
 - Golden snapshots: standing OK from the user (2026-10-22) to regenerate them (`GOLDEN_WRITE=1` for `test_golden_api.py` and `test_core.py`) for phase 1 engine changes, after checking every result against the old snapshot within 1e-9; give the largest difference in the commit message.
 - v2.1: `solver.ybus_sparse` builds Ybus as a scipy CSR array from `branch_admittances` (the vectorised `branch_y`, in-service rows only). `build_ybus` (dense, a Python loop) stays for the worked solution, the Ybus page and the Zbus fault study; `test_engine.py` checks that the two agree. `newton_raphson` works on the sparse Ybus: `_jacobian(Y, ang, mag)` fixes the sparse pattern once per solve and refills it on every iteration, and an exactly singular step raises `LinAlgError`, as numpy does. `branch_flows` computes every branch at once. Fast Decoupled is still dense (moving in v2.2); Gauss-Seidel stays dense (teaching only).
+- v2.2: `fast_decoupled` takes the sparse Ybus and factorises B' (`_susceptance` of 1/X) and B'' (-Im Ybus) once with `_lu`; results within 4e-13 of v2.1, same iteration counts. `dc_loadflow` / `dc_model` (DC load flow, see Methods) match PYPOWER's rundcpf to 1e-11 on case9 to case2383wp. `_check` and `_va` hold the solvers' shared input checks and Slack angles.
+- Known gap (fix in the reference-suite step): MATPOWER puts a tapped branch's From-side charging behind the tap, Yff = (y + jB/2)/a²; GridLens uses y/a² + jB/2 (known issue 7). case300 and case2383wp have tapped branches with B ≠ 0 (negative), so their AC results differ from MATPOWER by up to 6e-5 pu; the other MATPOWER cases match runpf to round-off.

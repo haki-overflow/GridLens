@@ -110,7 +110,7 @@ def newton_raphson(Y, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=30, damp=1.0):
             return th, V, True, hist
         if not np.isfinite(hist[-1]):
             break
-        dx = _lu_solve(jacobian(Vc, E, I), f)
+        dx = _lu(jacobian(Vc, E, I)).solve(f)
         th[ang] -= damp * dx[:len(ang)]
         V[mag] -= damp * dx[len(ang):]
     return th, V, False, hist
@@ -148,28 +148,23 @@ def _jacobian(Y, ang, mag):
     return jacobian
 
 
-def _lu_solve(J, f):
-    """J x = f by sparse LU; an exactly singular J raises LinAlgError like
+def _lu(A):
+    """Sparse LU factors of A; an exactly singular A raises LinAlgError like
     numpy.linalg.solve (gridcore.loadflow then tries another method)."""
     try:
-        return splu(J).solve(f)
+        return splu(sp.csc_array(A))
     except RuntimeError as e:   # SuperLU: "Factor is exactly singular"
         raise np.linalg.LinAlgError(str(e)) from None
 
 
 def fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=200):
-    """XB version: B' from series X only, B'' from the full Ybus."""
-    n = len(V0)
-    Bp = np.zeros((n, n))
-    for _, l in in_service(lines).iterrows():
-        i, j = int(l["From"]) - 1, int(l["To"]) - 1
-        b = 1 / l["X"]
-        Bp[i, i] += b
-        Bp[j, j] += b
-        Bp[i, j] -= b
-        Bp[j, i] -= b
-    B1 = Bp[np.ix_(ang, ang)]
-    B2 = -Y.imag[np.ix_(mag, mag)]
+    """XB version on the sparse Ybus: B' from series X only, B'' = -Im Ybus;
+    each is factorised once (sparse LU) and reused on every iteration."""
+    k = np.flatnonzero(_on(lines))
+    f, t = (lines[c].to_numpy(int)[k] - 1 for c in ("From", "To"))
+    Bp = _susceptance(len(V0), f, t, 1 / lines["X"].to_numpy(float)[k])
+    lu1 = _lu(Bp[ang][:, ang])
+    lu2 = _lu(-Y.imag[mag][:, mag]) if len(mag) else None
     th, V = th0.copy(), V0.copy()
     hist = []
     for _ in range(max_iter):
@@ -179,11 +174,19 @@ def fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, max_iter=200):
         hist.append(err)
         if err < tol:
             return th, V, True, hist
-        th[ang] += np.linalg.solve(B1, dP / V[ang])
+        th[ang] += lu1.solve(dP / V[ang])
         if len(mag):
             dQ = (Qsp - injections(Y, V, th).imag)[mag]
-            V[mag] += np.linalg.solve(B2, dQ / V[mag])
+            V[mag] += lu2.solve(dQ / V[mag])
     return th, V, False, hist
+
+
+def _susceptance(n, f, t, b):
+    """The n x n matrix of branch susceptances b between buses f and t (each
+    adds b at (f, f) and (t, t), -b at (f, t) and (t, f)): B' of Fast
+    Decoupled and B of the DC load flow."""
+    return sp.csr_array((np.r_[b, b, -b, -b], (np.r_[f, t, f, t], np.r_[f, t, t, f])),
+                        shape=(n, n))
 
 
 def gauss_seidel(Y, V0, th0, t, Psp, Qsp, tol=1e-6, max_iter=5000):
@@ -208,23 +211,33 @@ def gauss_seidel(Y, V0, th0, t, Psp, Qsp, tol=1e-6, max_iter=5000):
     return np.angle(V), np.abs(V), False, hist
 
 
+def _check(bus, lines):
+    """The solvers' own minimum checks (gridcore.prep_case does the full validation)."""
+    if (bus["Type"].values == "Slack").sum() < 1:  # one per island; prep_case checks islands
+        raise ValueError("Exactly one Slack bus is required.")
+    if not lines[["From", "To"]].isin(range(1, len(bus) + 1)).all().all():
+        raise ValueError("Line From/To must be bus numbers 1..N.")
+
+
+def _va(bus):
+    """Bus angles in radians from the Va column (degrees; missing = 0)."""
+    if "Va" not in bus:
+        return np.zeros(len(bus))
+    return np.radians(pd.to_numeric(bus["Va"], errors="coerce").fillna(0).to_numpy(float))
+
+
 def solve_loadflow(bus, lines, method="Newton-Raphson", tol=1e-8, init="flat",
                    damp=1.0, max_iter=None):
     """init "flat": PQ buses start at 1∠0; "setpoint": every bus starts at
     its V column (and angle column Va in degrees when present). damp < 1
     shortens each Newton-Raphson step (for hard cases)."""
+    _check(bus, lines)
     n = len(bus)
     t = bus["Type"].values
-    if (t == "Slack").sum() < 1:  # one per island; gridcore.prep_case checks islands
-        raise ValueError("Exactly one Slack bus is required.")
-    if not lines[["From", "To"]].isin(range(1, n + 1)).all().all():
-        raise ValueError("Line From/To must be bus numbers 1..N.")
     Y = ybus_sparse(n, lines, bus)
     V0 = bus["V"].astype(float).values.copy()
-    th0 = np.zeros(n)
-    va = np.radians(pd.to_numeric(bus["Va"], errors="coerce").fillna(0).to_numpy(float)) \
-        if "Va" in bus else th0
-    th0[t == "Slack"] = va[t == "Slack"]  # the reference angle (0 unless given)
+    va = _va(bus)
+    th0 = np.where(t == "Slack", va, 0.0)  # the reference angle (0 unless given)
     if init == "setpoint":
         V0[V0 <= 0] = 1.0
         th0 = va.copy()
@@ -237,8 +250,7 @@ def solve_loadflow(bus, lines, method="Newton-Raphson", tol=1e-8, init="flat",
 
     its = {} if max_iter is None else {"max_iter": max_iter}
     if method == "Fast Decoupled":
-        th, V, ok, hist = fast_decoupled(build_ybus(n, lines, bus), lines, V0, th0, Psp, Qsp,
-                                         ang, mag, tol, **its)
+        th, V, ok, hist = fast_decoupled(Y, lines, V0, th0, Psp, Qsp, ang, mag, tol, **its)
     elif method == "Gauss-Seidel":   # dense: teaching only
         th, V, ok, hist = gauss_seidel(build_ybus(n, lines, bus), V0, th0, t, Psp, Qsp, tol,
                                        **its)
@@ -264,6 +276,50 @@ def branch_flows(lines, Vc):
     return pd.DataFrame({"From": lines["From"].to_numpy(int), "To": lines["To"].to_numpy(int),
                          "P_ij": Sij.real, "Q_ij": Sij.imag, "P_ji": Sji.real,
                          "Q_ji": Sji.imag, "Loss_P": L.real, "Loss_Q": L.imag})
+
+
+# ------------------------------------------------------------ DC load flow
+def dc_model(n, lines):
+    """DC model of the in-service branches (as MATPOWER makeBdc): series
+    susceptance b = 1 / (X a); a phase shift φ (rad) acts as an injection
+    -b φ at From and +b φ at To. Returns (k, f, t, b, φ, B, Pshift)."""
+    k = np.flatnonzero(_on(lines))
+    f, t = (lines[c].to_numpy(int)[k] - 1 for c in ("From", "To"))
+    a = lines["Tap"].to_numpy(float)[k] if "Tap" in lines else np.ones(len(k))
+    a = np.where(a > 0, a, 1.0)
+    phi = np.radians(np.nan_to_num(lines["Shift"].to_numpy(float)[k])) if "Shift" in lines \
+        else np.zeros(len(k))
+    b = 1 / (lines["X"].to_numpy(float)[k] * a)
+    Pshift = np.bincount(f, -b * phi, n) + np.bincount(t, b * phi, n)
+    return k, f, t, b, phi, _susceptance(n, f, t, b), Pshift
+
+
+def dc_loadflow(bus, lines):
+    """DC load flow: |V| = 1; R, line charging and Bs left out; B θ = Pg - Pd
+    - Gs - Pshift with θ held at every Slack (its Va, else 0). Same return as
+    solve_loadflow (V = 1, Q = 0, no losses); hist is the largest P mismatch
+    before and after the one linear solve."""
+    _check(bus, lines)
+    n = len(bus)
+    k, f, t, b, phi, B, Pshift = dc_model(n, lines)
+    gs = bus["Gs"].fillna(0).to_numpy(float) if "Gs" in bus else np.zeros(n)
+    P = (bus["Pg"] - bus["Pd"]).astype(float).to_numpy() - gs - Pshift
+    slack = bus["Type"].to_numpy() == "Slack"
+    th = np.where(slack, _va(bus), 0.0)
+    ang = np.flatnonzero(~slack)
+    mis = (B @ th - P)[ang]
+    th[ang] -= _lu(B[ang][:, ang]).solve(mis)
+    hist = [np.abs(mis).max(initial=0), np.abs((B @ th - P)[ang]).max(initial=0)]
+    Pf = np.zeros(len(lines))
+    Pf[k] = b * (th[f] - th[t] - phi)
+    zero = np.zeros(len(lines))
+    flows = pd.DataFrame({"From": lines["From"].to_numpy(int), "To": lines["To"].to_numpy(int),
+                          "P_ij": Pf, "Q_ij": zero, "P_ji": -Pf, "Q_ji": zero,
+                          "Loss_P": zero, "Loss_Q": zero})
+    res = pd.DataFrame({"Bus": np.arange(1, n + 1), "V (pu)": np.ones(n),
+                        "Angle (deg)": np.degrees(th), "P_inj": B @ th + Pshift + gs,
+                        "Q_inj": np.zeros(n)})
+    return res, flows, True, hist
 
 # ============================================================================
 # Generator Q limits (PV -> PQ switching)

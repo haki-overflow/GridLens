@@ -1,5 +1,6 @@
 """v2 engine: the sparse Ybus and the sparse Newton-Raphson (analytical
-Jacobian) against the dense teaching versions and finite differences."""
+Jacobian) against the dense teaching versions and finite differences (v2.1);
+the sparse Fast Decoupled and the DC load flow (v2.2)."""
 import time
 from pathlib import Path
 
@@ -90,3 +91,50 @@ def test_newton_raphson_is_fast_on_case118():
     took = time.perf_counter() - t0
     assert ok and len(hist) - 1 == 4
     assert took < 0.5        # v1.6 (numerical Jacobian) about 0.1 s, v2.1 under 0.02 s
+
+
+# ------------------------------------------------- v2.2: sparse Fast Decoupled, DC
+@pytest.mark.parametrize("name", ["case30", "case118"])
+def test_fast_decoupled_ends_where_newton_raphson_does(name):
+    b, l = _case(name)
+    nr, _, ok1, _ = solve_loadflow(b, l, "Newton-Raphson", 1e-10)
+    fd, _, ok2, hist = solve_loadflow(b, l, "Fast Decoupled", 1e-10)
+    assert ok1 and ok2 and len(hist) - 1 < 30
+    assert np.abs(nr["V (pu)"] - fd["V (pu)"]).max() < 1e-9
+    assert np.abs(nr["Angle (deg)"] - fd["Angle (deg)"]).max() < 1e-7
+
+
+def test_dc_load_flow_balances_every_bus_on_case118():
+    """Each non-Slack bus: the flows leaving it add up to Pg - Pd - Gs; the
+    Slack picks up the rest and nothing is lost."""
+    b, l = _case("case118")
+    res, flows, ok, hist = solver.dc_loadflow(b, l)
+    out = np.bincount(l["From"] - 1, flows["P_ij"], len(b)) + \
+        np.bincount(l["To"] - 1, flows["P_ji"], len(b))
+    p = (b["Pg"] - b["Pd"] - b["Gs"]).to_numpy()
+    slack = (b["Type"] == "Slack").to_numpy()
+    assert ok and hist[-1] < 1e-10
+    assert np.abs(out - p)[~slack].max() < 1e-10
+    assert out.sum() == pytest.approx(0, abs=1e-10)
+    assert res["Angle (deg)"][slack].tolist() == pytest.approx([30.0])   # the file's Va
+
+
+def test_dc_load_flow_islands_each_with_a_slack():
+    """Two islands: each angle follows its own Slack; out-of-service rows carry 0."""
+    bus = pd.DataFrame({"Type": ["Slack", "PQ", "Slack", "PQ"], "V": [1.0] * 4,
+                        "Va": [0.0, 0.0, 10.0, 0.0], "Pg": [0.0] * 4, "Qg": [0.0] * 4,
+                        "Pd": [0, 0.5, 0, 0.2], "Qd": [0.0] * 4})
+    lines = pd.DataFrame({"From": [1, 3, 1], "To": [2, 4, 4], "R": [0.0] * 3,
+                          "X": [0.1, 0.2, 0.1], "B": [0.0] * 3, "InService": [1, 1, 0]})
+    res, flows, ok, _ = solver.dc_loadflow(bus, lines)
+    assert res["Angle (deg)"].tolist() == pytest.approx(
+        [0, np.degrees(-0.05), 10, 10 + np.degrees(-0.04)], abs=1e-12)
+    assert flows["P_ij"].tolist() == pytest.approx([0.5, 0.2, 0.0], abs=1e-12)
+
+
+def test_fd_and_dc_are_fast_on_case118():
+    b, l = _case("case118")
+    t0 = time.perf_counter()
+    assert solve_loadflow(b, l, "Fast Decoupled")[2]
+    solver.dc_loadflow(b, l)
+    assert time.perf_counter() - t0 < 0.5    # v2.2: about 15 ms together

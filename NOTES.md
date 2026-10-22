@@ -1,4 +1,4 @@
-# Notes for the next session (v2.1)
+# Notes for the next session (v2.2)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -24,12 +24,22 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   (solver._jacobian fills a fixed pattern; splu). case2383wp 49 ms, case1354pegase 37 ms, case118
   7 ms, 5-bus 4.6 ms (v2.0: 47.5 s, 12.5 s, 0.1 s, 6.3 ms). Results within 1.2e-12 of v2.0.
   139 tests pass (tests/test_engine.py is new).
+- v2.2: sparse Fast Decoupled (B', B'' factorised once; case2383wp 33 ms, 17 its; results within
+  4e-13 of v2.1) and solver.dc_loadflow (MATPOWER makeBdc model; case2383wp 9 ms). DC matches
+  PYPOWER rundcpf to 1e-11 on case9..case2383wp; AC NR matches PYPOWER runpf to round-off on
+  case9, 14, 30, 118, 1354pegase. 146 tests pass.
+- Found: case300 and case2383wp differ from MATPOWER by up to 6e-5 pu because of known issue 7
+  (tapped branches with B != 0, here negative B: MATPOWER Yff = (y + jB/2)/a^2, GridLens
+  y/a^2 + jB/2). Fix it in the reference-suite step: branch_y, branch_admittances and
+  working.ybus_parts ("charging jB/2/a^2" at the From side when tapped). No preset has such a
+  branch, so the golden snapshots do not move.
+- Cross-check tool (scratch only, not a dependency): pip install --target <dir> pypower, then
+  pypower.api rundcpf / runpf on a ppc built from the same .m text (formats._matrix).
 
 ## Next: Phase 1, engine v2 (do in this order, one version bump per change)
-2. v2.2: Fast Decoupled and DC load flow on the same sparse matrices (factorise B' and B'' once
-   with splu); GS stays dense (teaching only). working.fd_matrices / fast_decoupled_trace stay
-   dense; test_working checks the trace ends on the solver's answer (atol 1e-12).
 3. Accept negative X; refuse only R = X = 0 (gridcore.prep_case; case300 has a series capacitor).
+   Fast Decoupled (B' = 1/X) and the DC load flow (1/(X a)) cannot take X = 0: refuse those two
+   methods for such a case with a plain message, or fall back to NR.
 4. Element model with stable IDs (Bus, Line, Transformer, Generator, Load, Shunt) + converters from
    the v1 bus/line tables and from formats.py readers; results keyed by element ID.
 5. Q limits in N-1 and PV curve; N-1 drops isolated buses and reports lost load.

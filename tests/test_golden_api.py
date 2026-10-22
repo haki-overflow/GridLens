@@ -5,7 +5,8 @@ old data every number must stay exactly what v1.5 returned. Keys added later
 are allowed; keys and values in the snapshot are not allowed to change.
 Regenerated at v2.1 (sparse Newton-Raphson with the analytical Jacobian):
 results within 1.2e-12 of v2.0; the per-iteration mismatches (hist) within
-2.1e-9, the error of the old numerical Jacobian.
+2.1e-9, the error of the old numerical Jacobian. v2.2 (sparse Fast Decoupled):
+within 4e-13 of v2.1.
 Regenerate (only after an approved maths change): GOLDEN_WRITE=1 pytest tests/test_golden_api.py
 """
 import json

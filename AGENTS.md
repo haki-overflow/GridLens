@@ -31,11 +31,17 @@ topics.py      textbook calculators: symcomp (phase <-> sequence), tline (ABCD),
                seqfaults (sequence networks, 3-phase / SLG / LL / DLG), dispatch
                (economic dispatch), units (real units -> per unit)
 gridcore.py    prep_case (validation, islands), loadflow (fallback chain,
-               failure_hint), run_study, outage, line_loading; the CASES
-               examples; ai_report / lm_models (LM Studio). No Streamlit; used
-               by app.py and the API
-formats.py     case file readers: MATPOWER .m, IEEE common data format, CSV
-               templates -> GridLens case (per unit, bus rows, file numbers in Num)
+               failure_hint), run_study, solve_case (load flow on a
+               model.Case, results by element ID), outage, line_loading; the
+               CASES examples; ai_report / lm_models (LM Studio). No
+               Streamlit; used by app.py and the API
+model.py       element model (v2.4): Case with bus / branch / gen / load / shunt
+               tables and stable ids; from_tables / to_tables (v1 per-unit
+               tables), results (keyed by id), to_dict / from_dict
+formats.py     case file readers: MATPOWER .m (read_matpower_model -> model.Case,
+               read_matpower -> v1 tables via model.to_tables), IEEE common data
+               format, CSV templates -> GridLens case (per unit, bus rows, file
+               numbers in Num)
 figures.py     palette from theme.css, matplotlib / Plotly styles, matplotlib
                charts, the interactive one-line diagram (layout, routing, hover).
                No Streamlit (the API imports it)
@@ -149,3 +155,4 @@ LM Studio is only needed for the AI report: Developer tab, load Gemma, Start Ser
 - v2.2: `fast_decoupled` takes the sparse Ybus and factorises B' (`_susceptance` of 1/X) and B'' (-Im Ybus) once with `_lu`; results within 4e-13 of v2.1, same iteration counts. `dc_loadflow` / `dc_model` (DC load flow, see Methods) match PYPOWER's rundcpf to 1e-11 on case9 to case2383wp. `_check` and `_va` hold the solvers' shared input checks and Slack angles.
 - v2.3: `prep_case` refuses only in-service lines with R = X = 0 ("Series impedance must not be zero: ..."; the web marks R and X of such lines). Negative X (series capacitor, e.g. case300) and X = 0 with R > 0 are accepted. Fast Decoupled (B' = 1/X) raises `LinAlgError` for a line in service with X = 0, so `gridcore.loadflow` falls back to Newton-Raphson and `run_study`'s method comparison shows FD as not converged (Iterations, Loss, Min V empty); `working.fd_matrices` and `dc_loadflow` refuse X = 0 with a ValueError in plain words; `topics._y` refuses a zero sequence reactance. Fast decoupled methods assume X >> R and diverge on pure resistances, so no B' stand-in is used.
 - Known gap (fix in the reference-suite step): MATPOWER puts a tapped branch's From-side charging behind the tap, Yff = (y + jB/2)/a²; GridLens uses y/a² + jB/2 (known issue 7). case300 and case2383wp have tapped branches with B ≠ 0 (negative), so their AC results differ from MATPOWER by up to 6e-5 pu; the other MATPOWER cases match runpf to round-off.
+- v2.4: element model in `model.py`. A `Case` holds one DataFrame per element type (bus, branch, gen, load, shunt; columns in `model.COLUMNS`); every element has an `id` unique in the case. Bus ids are `bus<number>`; the others are numbered within their kind (`line3`, `trafo1`, `gen12`, `load4`, `shunt2`), and MATPOWER generators keep their file row (`gen<row>`). Bus numbers and names are labels; branches, generators, loads and shunts refer to bus ids. Powers are MW / MVAr, impedances per unit on the case base. A bus is Slack by its `slack` flag, PV when an in-service generator has a finite `vset`, else PQ (`model.bus_types`). Lines and transformers share the branch table (`kind`), so file order survives. `to_tables` makes the v1 tables (generators, loads and shunts summed per bus in table order with `np.bincount`, so the MATPOWER path reproduces the old reader bit for bit); `from_tables` goes the other way (MW <-> per unit can move the last bit). `model.results` keys a load flow by id and shares each Slack / PV bus's generation like MATPOWER's pfsoln (Q in proportion to the Q ranges, equally when a limit is missing; the Slack's first generator takes the P balance): matches PYPOWER runpf to 1e-11 on case24_ieee_rts (up to 6 units per bus). `gridcore.solve_case(case)` = `check_ids` + `prep_case` (taps and shunts always on) + `loadflow` + `results`. The API and the web still use the v1 tables (moving them onto the model is phase 3); validation messages still name bus rows.

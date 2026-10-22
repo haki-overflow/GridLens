@@ -32,7 +32,7 @@ from .schema import complex_in, frame, to_json
 
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
-app = FastAPI(title="GridLens API", version="2.3",
+app = FastAPI(title="GridLens API", version="2.4",
               description="Load flow, N-1, faults and textbook tools as JSON.")
 
 

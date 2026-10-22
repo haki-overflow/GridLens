@@ -13,6 +13,8 @@ import re
 import numpy as np
 import pandas as pd
 
+import model
+
 BUS_COLS = ["Num", "Name", "Type", "V", "Va", "kV", "Pg", "Qg", "Pd", "Qd",
             "Qmin", "Qmax", "Gs", "Bs"]
 LINE_COLS = ["From", "To", "R", "X", "B", "Tap", "Shift", "Rate", "InService", "Kind"]
@@ -74,9 +76,23 @@ def _matrix(text, field):
 
 
 def read_matpower(text, name="case"):
-    """MATPOWER case (version 2): mpc.baseMVA, mpc.bus, mpc.gen, mpc.branch
-    and optional mpc.bus_name. Generator data are summed per bus; buses of
-    type 4 (isolated) are left out with their branches."""
+    """MATPOWER case (version 2) in the v1 tables: read_matpower_model, then
+    generators, loads and shunts summed per bus (model.to_tables)."""
+    case, notes = read_matpower_model(text, name)
+    bus, lines = model.to_tables(case)
+    if list(bus["Num"]) != list(range(1, len(bus) + 1)):
+        notes.append("Bus numbers in the file are kept in the Num column; lines refer to "
+                     "bus rows 1.." f"{len(bus)}.")
+    return _case(case.name, case.base, bus[BUS_COLS], lines[LINE_COLS], notes)
+
+
+def read_matpower_model(text, name="case"):
+    """MATPOWER case (version 2): mpc.baseMVA, mpc.bus, mpc.gen, mpc.branch and
+    optional mpc.bus_name -> (model.Case, notes). Every generator is kept with
+    its own limits and status (gen<row>); a generator holds a voltage at bus
+    types 2 and 3, and the bus starts at the voltage of its first generator in
+    service. Loads and shunts come from the bus rows; buses of type 4
+    (isolated) are left out with their branches and generators."""
     text = re.sub(r"%[^\n]*", "", text)
     m = re.search(r"function\s+mpc\s*=\s*(\w+)", text)
     name = m.group(1) if m else name
@@ -91,55 +107,58 @@ def read_matpower(text, name="case"):
     names = re.findall(r"'([^']*)'", names.group(1)) if names else []
     notes = []
 
-    rows = []
-    for k, r in enumerate(bus_m):
-        num, typ, pd_, qd, gs, bs, _, vm, va, kv = r[:10]
-        rows.append(dict(Num=int(num), Name=names[k].strip() if k < len(names) else "",
-                         Type=int(typ), V=vm, Va=va, kV=kv, Pg=0.0, Qg=0.0,
-                         Pd=pd_ / base, Qd=qd / base, Qmin=np.nan, Qmax=np.nan,
-                         Gs=gs / base, Bs=bs / base))
-    bus = pd.DataFrame(rows)
-    iso = bus["Type"] == 4
-    if iso.any():
-        notes.append(f"{int(iso.sum())} isolated bus(es) (type 4) were left out.")
-    at = {n: i for i, n in enumerate(bus["Num"])}
-    has_gen = set()
-    for g in gen_m or []:
-        gb, pg, qg, qmax, qmin, vg = g[:6]
-        status = g[7] if len(g) > 7 else 1
-        i = at.get(int(gb))
-        if i is None or status <= 0:
+    B = np.array([r[:10] for r in bus_m], float)
+    num, typ = B[:, 0].astype(int), B[:, 1].astype(int)
+    keep = typ != 4
+    if not keep.all():
+        notes.append(f"{int((~keep).sum())} isolated bus(es) (type 4) were left out.")
+    at = {n: i for i, n in enumerate(num) if keep[i]}
+    vm = B[:, 7].copy()
+    gens, held = [], set()        # held: bus rows with a generator in service
+    for j, g in enumerate(gen_m or []):
+        i = at.get(int(g[0]))
+        if i is None:
             continue
-        first = i not in has_gen
-        has_gen.add(i)
-        bus.loc[i, "Pg"] += pg / base
-        bus.loc[i, "Qg"] += qg / base
-        bus.loc[i, "Qmax"] = (0 if first else bus.loc[i, "Qmax"]) + qmax / base
-        bus.loc[i, "Qmin"] = (0 if first else bus.loc[i, "Qmin"]) + qmin / base
-        if first:
-            bus.loc[i, "V"] = vg
-    lost_pv = [int(bus["Num"][i]) for i in range(len(bus))
-               if bus["Type"][i] == 2 and i not in has_gen]
+        on = (g[7] if len(g) > 7 else 1) > 0
+        if on and i not in held:
+            vm[i] = g[5]                       # the bus starts at its first generator's voltage
+            held.add(i)
+        gens.append(dict(id=f"gen{j + 1}", bus=f"bus{num[i]}", p=g[1], q=g[2], qmax=g[3],
+                         qmin=g[4], vset=g[5] if typ[i] in (2, 3) else np.nan, in_service=on))
+    lost_pv = [int(num[i]) for i in range(len(num)) if typ[i] == 2 and i not in held]
     if lost_pv:
         notes.append("PV buses with no generator in service were made PQ: "
                      + ", ".join(map(str, lost_pv)) + ".")
-    bus["Type"] = [("Slack" if t == 3 else "PV" if t == 2 and i in has_gen else "PQ")
-                   for i, t in enumerate(bus["Type"])]
-    bus = bus[~iso.to_numpy()].reset_index(drop=True)
-    bus["kV"] = bus["kV"].where(bus["kV"] > 0)   # 0 = not given
-
-    br = []
-    for r in br_m:
-        f, t, rr, xx, bb, rate = r[:6]
+    k = np.flatnonzero(keep)
+    case = model.Case(name=name, base=base)
+    case.bus = model.table("bus", {
+        "id": [f"bus{n}" for n in num[k]], "num": num[k],
+        "name": [names[i].strip() if i < len(names) else "" for i in k],
+        "kv": np.where(B[k, 9] > 0, B[k, 9], np.nan), "slack": typ[k] == 3, "vm": vm[k],
+        "va": B[k, 8]})
+    case.gen = model.table("gen", gens)
+    for kind, (a, c), cols in (("load", ("p", "q"), (2, 3)), ("shunt", ("g", "b"), (4, 5))):
+        has = k[(B[k, cols[0]] != 0) | (B[k, cols[1]] != 0)]
+        setattr(case, kind, model.table(kind, {
+            "id": [f"{kind}{n + 1}" for n in range(len(has))],
+            "bus": [f"bus{num[i]}" for i in has], a: B[has, cols[0]], c: B[has, cols[1]]}))
+    br = [r for r in br_m if int(r[0]) in at and int(r[1]) in at]
+    if len(br) < len(br_m):
+        notes.append(f"{len(br_m) - len(br)} branch(es) refer to buses that are not in the file "
+                     "and were left out.")
+    count = {"line": 0, "trafo": 0}
+    rows = []
+    for r in br:
         ratio = r[8] if len(r) > 8 else 0.0
         shift = r[9] if len(r) > 9 else 0.0
-        status = r[10] if len(r) > 10 else 1.0
-        br.append(dict(From=int(f), To=int(t), R=rr, X=xx, B=bb, Tap=ratio or 1.0,
-                       Shift=shift, Rate=rate, InService=1 if status > 0 else 0,
-                       Kind="trafo" if ratio or shift else "line"))
-    lines = pd.DataFrame(br, columns=LINE_COLS)
-    lines = _renumber(bus, lines, notes)
-    return _case(name, base, bus[BUS_COLS], lines, notes)
+        kind = "trafo" if ratio or shift else "line"
+        count[kind] += 1
+        rows.append(dict(id=f"{kind}{count[kind]}", kind=kind, from_bus=f"bus{int(r[0])}",
+                         to_bus=f"bus{int(r[1])}", r=r[2], x=r[3], b=r[4], rate=r[5],
+                         tap=ratio or 1.0, shift=shift,
+                         in_service=(r[10] if len(r) > 10 else 1.0) > 0))
+    case.branch = model.table("branch", rows)
+    return case, notes
 
 
 # ------------------------------------------------------- IEEE common format

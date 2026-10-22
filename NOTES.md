@@ -1,4 +1,4 @@
-# Notes for the next session (v2.3)
+# Notes for the next session (v2.4)
 
 Read first: AGENTS.md, then docs/design-v2.md (plan, gates, data model). Full design doc with
 diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
@@ -44,9 +44,17 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
 - case300.m stored Vm/Va are not MATPOWER's runpf answer (up to 9.8 deg away): for the reference
   suite use runpf values (PYPOWER runpf gives MATPOWER's algorithm), not the stored ones.
 
+- v2.4: model.py (element model: bus / branch / gen / load / shunt tables, stable ids, MW / MVAr),
+  from_tables / to_tables, results keyed by id with MATPOWER's generator sharing (matches PYPOWER
+  runpf to 1e-11 on case24_ieee_rts, 33 units); formats.read_matpower_model keeps every
+  generator and read_matpower now goes through it (v1 output identical on all 7 cases, and
+  case2383wp reads in 0.09 s instead of 0.6 s); gridcore.solve_case(case). tests/test_model.py,
+  tests/data/case24_ieee_rts.m. 162 tests pass. API and web still use the v1 tables.
+- Later (phase 3/4): API and web on the model; validation messages by id / bus number (prep_case
+  still says "bus rows", e.g. outage messages on imported cases name rows, not file numbers);
+  readers for CDF / CSV straight to the model.
+
 ## Next: Phase 1, engine v2 (do in this order, one version bump per change)
-4. Element model with stable IDs (Bus, Line, Transformer, Generator, Load, Shunt) + converters from
-   the v1 bus/line tables and from formats.py readers; results keyed by element ID.
 5. Q limits in N-1 and PV curve; N-1 drops isolated buses and reports lost load.
 6. Reference suite: MATPOWER case9, 14, 30, 39, 57, 118, 300, 1354pegase, 2383wp vs published
    solutions (stored Vm/Va where valid, runpf values for case9/case14) in tests/.

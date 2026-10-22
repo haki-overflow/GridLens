@@ -10,6 +10,7 @@ itself lives in solver.py, studies.py and qlimits.py.
 import numpy as np
 import pandas as pd
 
+import model
 from solver import solve_with_qlimits
 from solver import METHODS, solve_loadflow
 from studies import branch_names, contingency, pv_curve
@@ -364,6 +365,27 @@ def run_study(b, l, method, tol, base, vmin, vmax, qlim=False, init="flat",
                             f"stops solving.")
                          + "\nWorst N-1 line outages (worst first):\n"
                          + n1_text.head(3).to_string(index=False)))
+
+
+def solve_case(case, method="Newton-Raphson", tol=1e-8, qlim=False, init="flat",
+               fallback=True):
+    """Load flow on an element-model case (model.Case): its v1 tables are
+    validated (prep_case; taps and shunts are data, always on) and solved by
+    loadflow (fallback chain). Returns model.results (bus, branch, gen, load,
+    shunt keyed by element ID) plus ok, iterations, hist, attempts, hint, notes
+    and qlog; raises ValueError with the problems when the data cannot be solved."""
+    probs = model.check_ids(case)
+    if probs:
+        raise ValueError(" ".join(probs))
+    bus, lines = model.to_tables(case)
+    b, l, probs, notes = prep_case(bus, lines, dict(base=case.base, qlim=qlim, taps=True,
+                                                     shunts=True))
+    if probs:
+        raise ValueError(" ".join(probs))
+    res, flows, ok, hist, b_lf, qlog, attempts, hint = loadflow(b, l, method, tol, qlim, init,
+                                                                fallback)
+    return dict(model.results(case, res, flows, b_lf), ok=ok, iterations=len(hist) - 1,
+                hist=hist, attempts=attempts, hint=hint, notes=notes, qlog=qlog)
 
 
 def outage(b, l, k):

@@ -42,7 +42,7 @@ def pfmt(z, d=4):
 # ------------------------------------------------------------------ Ybus
 def ybus_parts(bus, lines):
     """One row per term: Element (i, j), source, value. Summing the terms
-    of an element gives build_ybus exactly (taps on the From side)."""
+    of an element gives build_ybus (taps on the From side)."""
     rows = []
     for _, l in in_service(lines).iterrows():
         i, j = int(l["From"]) - 1, int(l["To"]) - 1
@@ -61,8 +61,9 @@ def ybus_parts(bus, lines):
                      (j, j, f"{name}: series y", y),
                      (i, j, f"{name}: -y" + ("/a" if tap else ""), -y / a),
                      (j, i, f"{name}: -y" + ("/a" if tap else ""), -y / a)]
-        if l["B"]:
-            rows += [(i, i, f"{name}: charging jB/2", b),
+        if l["B"]:   # the From half sits behind the tap: jB/2 / a^2 there
+            rows += [(i, i, f"{name}: charging jB/2" + (f"/a² (a = {a:g})" if tap or sh else ""),
+                      b / a**2),
                      (j, j, f"{name}: charging jB/2", b)]
     if "Bs" in bus:
         for i, bs in enumerate(bus["Bs"].fillna(0).astype(float)):

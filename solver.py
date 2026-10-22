@@ -40,14 +40,16 @@ def islands(n, lines):
 def branch_y(l):
     """(Yff, Ytt, Yft, Ytf) of one branch: series y = 1/(R + jX), charging
     jB/2 at each end, off-nominal tap a and phase shift (deg) on the From
-    side (t = a e^{j shift}). With no shift this is the plain tap model."""
+    side (t = a e^{j shift}); the From half of the charging sits behind the
+    tap, Yff = (y + jB/2)/a^2, as in MATPOWER. With no shift this is the plain
+    tap model."""
     a = l["Tap"] if "Tap" in l and l["Tap"] > 0 else 1.0
     y, b = 1 / complex(l["R"], l["X"]), 1j * l["B"] / 2
     s = float(l["Shift"]) if "Shift" in l and l["Shift"] else 0.0
     if not s:
-        return y / a**2 + b, y + b, -y / a, -y / a
+        return (y + b) / a**2, y + b, -y / a, -y / a
     t = a * np.exp(1j * np.radians(s))
-    return y / a**2 + b, y + b, -y / np.conj(t), -y / t
+    return (y + b) / a**2, y + b, -y / np.conj(t), -y / t
 
 
 def build_ybus(n, lines, bus=None):
@@ -84,7 +86,7 @@ def branch_admittances(lines):
     b = 0.5j * col("B")
     t = a * np.exp(1j * np.radians(s))
     return (k, col("From").astype(int) - 1, col("To").astype(int) - 1,
-            y / a**2 + b, y + b, -y / np.conj(t), -y / t)
+            (y + b) / a**2, y + b, -y / np.conj(t), -y / t)
 
 
 def ybus_sparse(n, lines, bus=None):

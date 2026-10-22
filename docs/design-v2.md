@@ -16,6 +16,13 @@ Cause: dense n x n matrices and a numerical Jacobian (about n^3 per Newton step)
 A sparse, vectorised Python NR (MATPOWER newtonpf style, numpy + scipy.sparse) solved case2383wp
 in 57 ms with the same answer (max |V| diff 5e-11 pu). C++ is not needed.
 
+## Phase 1 result (v2.6, 2026-10-22)
+Engine v2 done in v2.1-v2.6: sparse Newton-Raphson (analytical Jacobian) and Fast Decoupled, DC load
+flow, negative X, element model with stable ids, Q limits in N-1 and P-V, N-1 that reports lost load.
+Gate passed: case2383wp load flow 0.07 s (was 47.5 s); ten MATPOWER cases (case9 to case2383wp) match
+MATPOWER's runpf / rundcpf to round-off (|V| 2e-12 pu, angles 1e-10 deg), every generator's P and Q
+too (tests/test_reference.py).
+
 ## Blockers
 1. Dense engine (above). 2. Data model: generators, loads, shunts are bus columns; transformers are
 lines with a tag. 3. Validation rejects negative X. 4. Install needs Python, Node and a terminal.

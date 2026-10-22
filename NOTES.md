@@ -81,7 +81,10 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   N-1 designs in /tmp/claude-0/-home-user/71fb2b95-b5a7-467b-9f6a-90820ae02f15/scratchpad/n1/
   (lean/, reuse/, screen/: proto.py each; bench.py and reference.pkl = full reference N-1 of
   case2383wp), benchmarks them on all 2,896 outages and judges them. If the result is lost,
-  re-read those files (or rerun the bench) before redesigning. Plan after it: v2.8 background
+  re-read those files (or rerun the bench) before redesigning. Its results (one line per agent: the
+  three prototype reports, the benchmark table, three judges) are in
+  /root/.claude/projects/-home-user/71fb2b95-b5a7-467b-9f6a-90820ae02f15/subagents/workflows/wf_f00bdf11-0fb/journal.jsonl
+  (read the "result" lines; if the run is still going, wait or rerun bench.py). Plan after it: v2.8 background
   jobs (in-process threads, POST /api/jobs, GET /api/jobs/{id} progress, DELETE cancel; web polls
   and shows progress instead of a frozen Run), then v2.9 the winning fast N-1.
 

@@ -20,7 +20,8 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
   exactly what changed in the commit message and the TL;DR (as in v2.5, the IEEE 14 7-8 row).
 - tools/reference_pf.py (PYPOWER, dev tool only, not a dependency) stays: user OK 2026-10-22.
 - The user wants short TL;DRs as work progresses.
-- If context gets above ~85%, update this file and tell the user to /clear.
+- If context gets above ~90% (user, 2026-10-22), update this file and tell the user to /clear;
+  the next session continues from here.
 
 ## State
 - v1.6 is done (any-case input, imports, islands, fallback, Falstad-style plan).
@@ -75,6 +76,14 @@ diagrams: https://claude.ai/artifact/Q58NCpRtLWeRMAd5N5vttV
 - Fast N-1 baseline: 50 ms per outage on case2383wp (all 2,896 ~145 s), 70% SuperLU factorisation.
   A design workflow prototyped lean-Newton / factorisation-reuse / screen+parallel options in
   the scratchpad (n1/); its benchmark decides v2.9.
+
+- In flight (2026-10-22): workflow "design-fast-n1" (run wf_f00bdf11-0fb) prototypes three fast
+  N-1 designs in /tmp/claude-0/-home-user/71fb2b95-b5a7-467b-9f6a-90820ae02f15/scratchpad/n1/
+  (lean/, reuse/, screen/: proto.py each; bench.py and reference.pkl = full reference N-1 of
+  case2383wp), benchmarks them on all 2,896 outages and judges them. If the result is lost,
+  re-read those files (or rerun the bench) before redesigning. Plan after it: v2.8 background
+  jobs (in-process threads, POST /api/jobs, GET /api/jobs/{id} progress, DELETE cancel; web polls
+  and shows progress instead of a frozen Run), then v2.9 the winning fast N-1.
 
 ## Next: Phase 2, studies and jobs (docs/design-v2.md; one version bump per change, v2.7 on)
 Gate: all 2,896 branch outages of case2383wp in under 2 min; IEC TR 60909-4 examples match.
